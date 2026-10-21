@@ -1,0 +1,5 @@
+[
+  {"tool": "file_write", "args": {"path": "/work/out/draft.txt", "content": "Good morning"}},
+  {"tool": "file_read",  "args": {"path": "/work/inbox/mail.txt"}},
+  {"tool": "file_write", "args": {"path": "/work/out/x.txt", "content": "the key"}}
+]

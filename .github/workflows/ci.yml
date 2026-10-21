@@ -1,0 +1,168 @@
+name: CI
+
+# Private repository: every run spends Actions minutes. Changes to docs and
+# Markdown only don't run CI.
+on:
+  push:
+    paths-ignore: ["**.md", "docs/**", "examples/demo/*.cast", "examples/demo/*.gif", "examples/demo/*.mp4"]
+  pull_request:
+    paths-ignore: ["**.md", "docs/**", "examples/demo/*.cast", "examples/demo/*.gif", "examples/demo/*.mp4"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # Every test binary links wasmtime and libp2p; with full debug info the
+  # target dir outgrows the runner's disk and the linker dies (SIGBUS).
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
+  CARGO_INCREMENTAL: "0"
+
+# A newer push to the same branch or PR supersedes the running one.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# fmt --check and clippy -D warnings come back once the codebase is clean (F0.6).
+jobs:
+  check:
+    name: Build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: Build workspace
+        run: cargo build --workspace --all-targets
+      - name: Run tests
+        run: cargo test --workspace
+      - name: Clippy (report only)
+        run: cargo clippy --workspace --all-targets || true
+
+  # RustSec advisories (what `cargo audit` checks), licenses and sources; policy in deny.toml.
+  deny:
+    name: Supply chain (cargo deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories licenses sources bans
+
+  builtins:
+    name: Rebuild built-in WASM tools from source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: Rebuild builtins.wasm
+        run: ./scripts/build-builtins.sh
+      - name: Sandbox tests against the fresh build
+        run: cargo test -p cleimesh-wasm-sandbox --test builtin_tools
+
+  fuzz:
+    name: Fuzz smoke (60 s per target)
+    runs-on: ubuntu-latest
+    # The 60 s per target smoke runs on main and on demand, not on every push.
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+      - name: Install cargo-fuzz
+        run: cargo install --locked cargo-fuzz
+      - name: Fuzz
+        run: SECONDS_PER_TARGET=60 scripts/fuzz.sh
+      - name: Upload crashes
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts/
+
+  bench:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: Run benchmarks
+        run: NO_DOCKER=1 JOBS=2 scripts/bench.sh
+      - name: Upload benchmark report
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-report
+          path: docs/benchmarks.md
+
+  build-release:
+    name: Build Release Artifacts
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [check, builtins]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: Build release CLI
+        run: cargo build --release --bin cleimesh
+      - name: Create release artifacts
+        run: |
+          mkdir -p dist
+          cp target/release/cleimesh dist/
+          tar -czf dist/cleimesh-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz -C dist cleimesh
+          sha256sum dist/cleimesh-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz > dist/SHA256SUMS
+      - name: Upload release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: dist/
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          files: |
+            dist/cleimesh
+            dist/cleimesh-*.tar.gz
+            dist/SHA256SUMS
+          generate_release_notes: true
+
+  cross-compile:
+    name: Cross-compile ARM64
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: build-release
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cross-compilation tools
+        run: |
+          rustup target add aarch64-unknown-linux-gnu
+          sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+      - name: Build ARM64 binary
+        run: |
+          cargo build --release --bin cleimesh --target aarch64-unknown-linux-gnu
+          mkdir -p dist-arm64
+          cp target/aarch64-unknown-linux-gnu/release/cleimesh dist-arm64/
+          tar -czf dist/cleimesh-${{ github.ref_name }}-aarch64-unknown-linux-gnu.tar.gz -C dist-arm64 cleimesh
+      - name: Upload ARM64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts-arm64
+          path: dist-arm64/

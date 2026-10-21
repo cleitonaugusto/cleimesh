@@ -1,0 +1,36 @@
+[package]
+name = "cleimesh-cli"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+
+[[bin]]
+name = "cleimesh"
+path = "src/main.rs"
+
+[dependencies]
+cleimesh-core = { path = "../cleimesh-core" }
+cleimesh-wasm-sandbox = { path = "../cleimesh-wasm-sandbox" }
+cleimesh-p2p = { path = "../cleimesh-p2p" }
+cleimesh-receipt = { path = "../cleimesh-receipt" }
+cleimesh-observability = { path = "../cleimesh-observability" }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+clap = { version = "4.5", features = ["derive"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+directories = { workspace = true }
+chrono = { workspace = true }
+json5 = "0.4"
+uuid = { workspace = true }
+rmcp = { version = "3.5.1", default-features = false, features = ["server", "transport-io", "client", "transport-child-process"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = { workspace = true }
+rmcp = { version = "3.5.1", default-features = false, features = ["client", "transport-child-process"] }

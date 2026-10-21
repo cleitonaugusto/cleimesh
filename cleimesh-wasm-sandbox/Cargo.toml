@@ -1,0 +1,34 @@
+[package]
+name = "cleimesh-wasm-sandbox"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+
+[dependencies]
+cleimesh-core = { path = "../cleimesh-core" }
+cleimesh-observability = { path = "../cleimesh-observability" }
+wasmtime = { workspace = true }
+wasmtime-wasi = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+bytes = { workspace = true }
+parking_lot = { workspace = true }
+sha2 = { workspace = true }
+chacha20 = { version = "0.10", features = ["rng"] }
+# Same version as wasmtime-wasi: its preview1 ABI functions take wiggle's GuestMemory (fs_observe).
+wiggle = "48.0.6"
+futures = { workspace = true }
+notify = { version = "6.1", features = ["mio"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+criterion = "0.5"
+
+[[bench]]
+name = "wasm_sandbox"
+harness = false

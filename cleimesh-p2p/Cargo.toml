@@ -1,0 +1,37 @@
+[package]
+name = "cleimesh-p2p"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+
+[dependencies]
+cleimesh-core = { path = "../cleimesh-core" }
+cleimesh-aat = { path = "../cleimesh-aat" }
+cleimesh-receipt = { path = "../cleimesh-receipt" }
+sha2 = { workspace = true }
+hmac = "0.12"
+chrono = { workspace = true }
+cleimesh-wasm-sandbox = { path = "../cleimesh-wasm-sandbox" }
+cleimesh-observability = { path = "../cleimesh-observability" }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+futures = { workspace = true }
+uuid = { workspace = true, features = ["v7"] }
+rand = { workspace = true }
+directories = { workspace = true }
+libp2p = { version = "0.57", features = ["tcp", "dns", "tokio", "noise", "yamux", "mdns", "kad", "gossipsub", "identify", "ping", "relay", "dcutr", "request-response", "macros"] }
+libp2p-tcp = { version = "0.45", features = ["tokio"] }
+
+[dev-dependencies]
+proptest = "1"
+criterion = { workspace = true }
+tempfile = { workspace = true }
+
+[[bench]]
+name = "enforcement"
+harness = false

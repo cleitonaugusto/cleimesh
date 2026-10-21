@@ -1,0 +1,18 @@
+/target
+**/*.rs.bk
+*.wasm
+!.wasm
+# Built-in tools: committed so a fresh clone builds without the wasm target (scripts/build-builtins.sh)
+!wasm-tools/builtins.wasm
+wasm-tools/builtins/target
+.env
+.env.local
+*.log
+.DS_Store
+*.swp
+*.swo
+*~
+.vscode
+.idea
+# Local node data (sled databases created by runs and tests)
+*-data/

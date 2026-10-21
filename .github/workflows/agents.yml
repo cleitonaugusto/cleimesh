@@ -1,0 +1,29 @@
+name: Agents
+
+# Real OpenClaw and Hermes agent turns through `cleimesh mcp serve`, driven by
+# a scripted model (no API key). Each run installs the agents' latest releases,
+# so it runs weekly and on demand rather than on every push.
+on:
+  # Weekly schedule paused while the repository is private (Actions minutes);
+  # restore it on the public repository:
+  #   schedule:
+  #     - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  agents:
+    name: OpenClaw and Hermes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build cleimesh
+        run: cargo build -p cleimesh-cli --bin cleimesh
+      - name: Agent turns
+        run: tests/agents/run.sh target/debug/cleimesh openclaw hermes

@@ -1,0 +1,42 @@
+[package]
+name = "cleimesh-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+description = "Fuzz targets for the parsers that take outside input (S17)"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+cleimesh-aat = { path = "../cleimesh-aat" }
+cleimesh-receipt = { path = "../cleimesh-receipt" }
+ed25519-dalek = "2.1"
+serde_json = "1.0"
+
+# Own workspace: the fuzz crate builds on nightly with sanitizers, apart
+# from the main workspace.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "aat_verify"
+path = "fuzz_targets/aat_verify.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "receipt_log"
+path = "fuzz_targets/receipt_log.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "seeds"
+path = "src/bin/seeds.rs"
+test = false
+doc = false
+bench = false

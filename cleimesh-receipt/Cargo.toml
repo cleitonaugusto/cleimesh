@@ -1,0 +1,23 @@
+[package]
+name = "cleimesh-receipt"
+description = "Signed, hash-chained action receipts (draft-sahu-agent-action-receipts-00)"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+ed25519-dalek = "2.1"
+sha2 = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
+criterion = { workspace = true }
+tempfile = { workspace = true }
+
+[[bench]]
+name = "append"
+harness = false

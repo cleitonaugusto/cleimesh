@@ -1,0 +1,43 @@
+# cargo-deny policy (S12). CI runs `cargo deny check`.
+
+[graph]
+all-features = false
+
+[advisories]
+# Vulnerabilities and yanked crates fail the build. Unmaintained crates fail
+# too, unless listed here with the reason they stay.
+yanked = "deny"
+ignore = [
+    # sled 0.34 (cleimesh-storage, frozen: section 9) pulls these three.
+    { id = "RUSTSEC-2025-0141", reason = "bincode 1, via sled and cleimesh-storage (frozen)" },
+    { id = "RUSTSEC-2025-0057", reason = "fxhash, via sled (frozen storage)" },
+    { id = "RUSTSEC-2024-0384", reason = "instant, via sled's parking_lot 0.11 (frozen storage)" },
+    { id = "RUSTSEC-2024-0436", reason = "paste, proc-macro only, via libp2p-mdns's netlink stack" },
+    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error, proc-macro only, via utoipa 4 (frozen HTTP API)" },
+]
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "CDLA-Permissive-2.0",
+    "MPL-2.0",
+    "CC0-1.0",
+]
+confidence-threshold = 0.9
+
+[bans]
+# Duplicates come from libp2p and wasmtime pinning different majors; not checked.
+multiple-versions = "allow"
+wildcards = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

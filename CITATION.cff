@@ -1,0 +1,42 @@
+cff-version: 1.2.0
+title: >-
+  CleiMesh: signed, delegable permissions for AI agents, enforced by a
+  WebAssembly sandbox and backed by replayable receipts
+message: If you use this software, please cite it using these metadata.
+type: software
+authors:
+  - given-names: Cleiton Augusto
+    family-names: Correa Bezerra
+    email: augusto.cleiton@gmail.com
+    city: Porto Velho
+    country: BR
+repository-code: 'https://github.com/cleitonaugusto/cleimesh'
+version: 0.1.1
+date-released: '2026-10-21'
+abstract: >-
+  AI agents call tools and delegate work to other agents with all of their
+  user's permissions. CleiMesh puts five pieces together. A permission is a
+  signed token in the IETF Attenuating Agent Tokens JWT profile that can only
+  narrow as it is delegated, offline. The permission becomes the configuration
+  of the WebAssembly sandbox the tool runs in, where nothing is allowed by
+  default. Every call, allowed or refused, leaves a signed, hash-chained
+  receipt in the draft-sahu-agent-action-receipts format, and no call runs
+  before its receipt is on disk. Calls run with a frozen clock and seeded
+  randomness recorded in the receipt, so an auditor can replay a call and
+  compare its output byte for byte instead of trusting the signer. Taint
+  follows the delegation chain: once a tool that brings in outside content
+  returns to an agent, tools that act on the world are refused for that
+  agent's whole chain until a human clears it.
+keywords:
+  - AI agents
+  - capability-based security
+  - delegation
+  - WebAssembly
+  - sandboxing
+  - prompt injection
+  - audit
+  - Model Context Protocol
+  - Rust
+license:
+  - MIT
+  - Apache-2.0

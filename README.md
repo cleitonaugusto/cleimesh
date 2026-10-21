@@ -219,7 +219,7 @@ Every command in it runs against the `cleimesh` binary before each edition, and 
 - **[AI Agents in a Cage](https://leanpub.com/ai-agents-in-a-cage)** (English)
 - **[Agentes de IA na jaula](https://leanpub.com/agentes-de-ia-na-jaula)** (Portuguese)
 
-The first two chapters are a free sample. There is no publisher behind it, so if it helps you, an honest review goes a long way.
+The free sample shows the cover and the full table of contents. There is no publisher behind it, so if it helps you, an honest review goes a long way.
 
 ## Development
 

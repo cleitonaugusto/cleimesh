@@ -219,7 +219,7 @@ Cada comando do livro roda contra o binário `cleimesh` antes de cada edição, 
 - **[Agentes de IA na jaula](https://leanpub.com/agentes-de-ia-na-jaula)** (português)
 - **[AI Agents in a Cage](https://leanpub.com/ai-agents-in-a-cage)** (inglês)
 
-Os dois primeiros capítulos são uma amostra grátis. Não há editora por trás; se ele te ajudar, uma avaliação honesta faz muita diferença.
+A amostra grátis mostra a capa e o sumário completo. Não há editora por trás; se ele te ajudar, uma avaliação honesta faz muita diferença.
 
 ## Desenvolvimento
 

@@ -24,8 +24,8 @@ categories = ["command-line-utilities", "distributed-systems", "wasm"]
 
 [workspace.dependencies]
 tokio = { version = "1.38", features = ["full"] }
-wasmtime = "48.0.6"
-wasmtime-wasi = "48.0.6"
+wasmtime = "48.0.7"
+wasmtime-wasi = "48.0.7"
 anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

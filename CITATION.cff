@@ -10,6 +10,7 @@ authors:
     email: augusto.cleiton@gmail.com
     city: Porto Velho
     country: BR
+doi: 10.5281/zenodo.23547249
 repository-code: 'https://github.com/cleitonaugusto/cleimesh'
 version: 0.1.1
 date-released: '2026-10-21'

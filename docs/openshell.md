@@ -13,6 +13,10 @@ agent makes. Together, the agent's body and its hands are both contained:
 Tested with OpenShell 0.1.4 and OpenClaw 2026.10.3, with both a command-line
 agent and OpenClaw inside the sandbox. What was checked is at the end.
 
+The same setup as an OpenShell workload (image, policy file and a script
+that runs it end to end, re-tested with OpenShell 0.1.5):
+[examples/openshell](../examples/openshell/README.md).
+
 ## 1. The node, outside the sandbox
 
 On the host that runs the OpenShell gateway, as a user the agent is not:

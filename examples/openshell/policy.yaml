@@ -1,0 +1,25 @@
+# The agent's sandbox may reach one thing: the CleiMesh node's port on the
+# host, and only through the cleimesh binary. Add the rule your agent needs
+# for its model provider next to it.
+#
+#   openshell sandbox create --name agent --from cleimesh-agent:latest \
+#     --policy examples/openshell/policy.yaml -- sleep infinity
+
+version: 1
+
+filesystem_policy:
+  include_workdir: true
+  read_only: [/bin, /usr, /lib, /proc, /dev/urandom, /etc, /var/log]
+  read_write: [/sandbox, /tmp, /dev/null]
+landlock:
+  compatibility: best_effort
+
+network_policies:
+  cleimesh:
+    name: cleimesh-node
+    endpoints:
+      - host: host.openshell.internal
+        port: 7400
+        protocol: tcp
+    binaries:
+      - { path: /usr/local/bin/cleimesh }

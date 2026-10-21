@@ -7,6 +7,7 @@
 
 [![CI](https://github.com/cleitonaugusto/cleimesh/actions/workflows/ci.yml/badge.svg)](https://github.com/cleitonaugusto/cleimesh/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23547249.svg)](https://doi.org/10.5281/zenodo.23547249)
 
 > **Signed permissions for AI agents that the sandbox actually enforces, and receipts anyone can replay to check.**
 

@@ -45,8 +45,8 @@ What it does:
    (the decision before it runs, the result after); a refused one leaves
    one, so the run above writes five.
 
-Tested with OpenShell 0.1.5 (Docker compute driver) and CleiMesh v0.1.0
-(`CLEIMESH_VERSION=v0.1.0 examples/openshell/demo.sh`).
+Tested with OpenShell 0.1.5 (Docker compute driver) and CleiMesh v0.1.0 and
+v0.1.1; another release goes through `CLEIMESH_VERSION=vX.Y.Z`.
 
 ## With your agent
 

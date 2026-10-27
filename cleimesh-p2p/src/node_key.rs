@@ -24,7 +24,9 @@ pub fn default_key_path(file_name: &str) -> Option<PathBuf> {
 }
 
 /// Loads the keypair at `path`, or generates and stores a new Ed25519 one if
-/// the file does not exist.
+/// the file does not exist. Two processes starting at once (the node service
+/// and `cleimesh id`) end up with the same key: the first to store it wins and
+/// the other loads it.
 pub fn load_or_generate(path: &Path) -> Result<Keypair> {
     match fs::read(path) {
         Ok(bytes) => {
@@ -37,7 +39,9 @@ pub fn load_or_generate(path: &Path) -> Result<Keypair> {
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             let keypair = Keypair::generate_ed25519();
-            store(path, &keypair)?;
+            if !store(path, &keypair)? {
+                return load_or_generate(path);
+            }
             tracing::info!("Generated node identity at {}", path.display());
             Ok(keypair)
         }
@@ -63,9 +67,11 @@ pub fn holder_jwk(peer: &PeerId) -> Result<cleimesh_aat::Jwk> {
     Ok(cleimesh_aat::Jwk::from_key(&key))
 }
 
-/// Writes the key to a temporary file created with mode 0600, then renames it
-/// into place, so a crash never leaves a half-written key behind.
-fn store(path: &Path, keypair: &Keypair) -> Result<()> {
+/// Writes the key to a temporary file created with mode 0600, then links it
+/// into place, so a crash never leaves a half-written key behind. Returns
+/// false, and changes nothing, if another process stored a key first: a
+/// rename would replace that key while its process keeps using it.
+fn store(path: &Path, keypair: &Keypair) -> Result<bool> {
     let bytes = keypair
         .to_protobuf_encoding()
         .map_err(|e| anyhow::anyhow!("Cannot encode node identity: {}", e))?;
@@ -74,7 +80,9 @@ fn store(path: &Path, keypair: &Keypair) -> Result<()> {
             .map_err(|e| anyhow::anyhow!("Cannot create {}: {}", dir.display(), e))?;
     }
 
-    let tmp = path.with_extension("key.tmp");
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = path.with_extension(format!("key.{}.{}.tmp", std::process::id(), n));
     let mut options = fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
     #[cfg(unix)]
@@ -82,16 +90,19 @@ fn store(path: &Path, keypair: &Keypair) -> Result<()> {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    let write = || -> std::io::Result<()> {
+    let write = || -> std::io::Result<bool> {
         let mut file = options.open(&tmp)?;
         file.write_all(&bytes)?;
         file.sync_all()?;
-        fs::rename(&tmp, path)
+        match fs::hard_link(&tmp, path) {
+            Ok(()) => Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+            Err(e) => Err(e),
+        }
     };
-    write().map_err(|e| {
-        let _ = fs::remove_file(&tmp);
-        anyhow::anyhow!("Cannot write node identity {}: {}", path.display(), e).into()
-    })
+    let stored = write();
+    let _ = fs::remove_file(&tmp);
+    stored.map_err(|e| anyhow::anyhow!("Cannot write node identity {}: {}", path.display(), e).into())
 }
 
 #[cfg(unix)]
@@ -115,4 +126,31 @@ fn check_permissions(path: &Path) -> Result<()> {
 #[cfg(not(unix))]
 fn check_permissions(_path: &Path) -> Result<()> {
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn processes_racing_to_create_the_key_all_get_the_one_on_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(NODE_KEY_FILE);
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+        let ids: Vec<PeerId> = (0..8)
+            .map(|_| {
+                let (path, barrier) = (path.clone(), barrier.clone());
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    load_or_generate(&path).unwrap().public().to_peer_id()
+                })
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|t| t.join().unwrap())
+            .collect();
+        let on_disk = load_or_generate(&path).unwrap().public().to_peer_id();
+        assert!(ids.iter().all(|id| *id == on_disk), "{ids:?} vs {on_disk}");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1, "no temporary file left behind");
+    }
 }

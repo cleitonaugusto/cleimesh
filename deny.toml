@@ -14,6 +14,12 @@ ignore = [
     { id = "RUSTSEC-2024-0384", reason = "instant, via sled's parking_lot 0.11 (frozen storage)" },
     { id = "RUSTSEC-2024-0436", reason = "paste, proc-macro only, via libp2p-mdns's netlink stack" },
     { id = "RUSTSEC-2024-0370", reason = "proc-macro-error, proc-macro only, via utoipa 4 (frozen HTTP API)" },
+    # zstd 0.13 comes only with wasmtime 48's on-disk compilation cache, which
+    # runs only when configured; CleiMesh never configures it. Fixed in zstd
+    # 0.14 / zstd-safe 8, which wasmtime 48 does not accept.
+    { id = "RUSTSEC-2026-0391", reason = "zstd, via wasmtime's compilation cache (never enabled)" },
+    { id = "RUSTSEC-2026-0398", reason = "zstd-safe, via wasmtime's compilation cache (never enabled)" },
+    { id = "RUSTSEC-2026-0403", reason = "zstd-safe, via wasmtime's compilation cache (never enabled)" },
 ]
 
 [licenses]

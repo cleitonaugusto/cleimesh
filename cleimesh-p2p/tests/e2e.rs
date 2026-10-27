@@ -116,6 +116,27 @@ async fn call_to_an_unreachable_peer_fails_fast() {
     assert!(started.elapsed() < Duration::from_secs(10), "waited for the timeout instead of the dial failure");
 }
 
+// RE1: `doctor` checks that the node an agent is registered with answers,
+// and is the node its tokens name, without leaving a receipt there.
+#[tokio::test]
+async fn connect_reaches_the_node_and_refuses_another_one_at_its_address() {
+    let provider = node();
+    let provider_id = provider.local_peer_id();
+    let (_provider, addr) = serve(provider).await;
+
+    let client = client_of(provider_id, addr.clone()).await;
+    client.connect(provider_id).await.unwrap();
+
+    let impostor = PeerId::random();
+    let client = client_of(impostor, addr).await;
+    let err = client.connect(impostor).await.unwrap_err().to_string();
+    assert!(err.contains("cannot connect") && err.contains(&provider_id.to_string()), "unexpected error: {err}");
+
+    let nobody = PeerId::random();
+    let client = client_of(nobody, "/ip4/127.0.0.1/tcp/1".parse().unwrap()).await;
+    assert!(client.connect(nobody).await.is_err());
+}
+
 #[tokio::test]
 async fn handle_shutdown_stops_the_event_loop() {
     let (provider, _, _, _, _) = provider_and_client().await;

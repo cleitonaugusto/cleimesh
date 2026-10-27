@@ -93,6 +93,9 @@ pub struct NodeSnapshot {
 /// response arrived.
 type InvokeReply = tokio::sync::oneshot::Sender<std::result::Result<ToolResponse, String>>;
 
+/// Outcome of a `NodeHandle::connect`: connected, or why the dial failed.
+type ConnectReply = tokio::sync::oneshot::Sender<std::result::Result<(), String>>;
+
 /// A finished inbound tool run, waiting for the event loop to record it and
 /// send it back.
 type Execution = (PeerId, ResponseChannel<ToolResponse>, ToolResponse, receipts::Outcome, cleimesh_wasm_sandbox::FsObserved);
@@ -106,6 +109,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_millis(EXECUTION_TIMEOUT_MS + 5
 /// Requests sent to a running event loop through a `NodeHandle`.
 enum Command {
     Invoke { peer: PeerId, request: ToolRequest, reply: InvokeReply },
+    Connect { peer: PeerId, reply: ConnectReply },
     AddPeerAddress { peer: PeerId, addr: Multiaddr },
     ListenAddrs { reply: tokio::sync::oneshot::Sender<Vec<Multiaddr>> },
     Shutdown,
@@ -154,6 +158,19 @@ impl NodeHandle {
         let (reply, rx) = tokio::sync::oneshot::channel();
         self.send(Command::Invoke { peer, request, reply })?;
         wait_for_response(rx).await
+    }
+
+    /// Dials `peer` and waits for the connection, sending no request (so the
+    /// peer records nothing). Fails if nothing answers at its address or if
+    /// what answers is another node: libp2p checks the PeerId on connect.
+    pub async fn connect(&self, peer: PeerId) -> Result<()> {
+        let (reply, rx) = tokio::sync::oneshot::channel();
+        self.send(Command::Connect { peer, reply })?;
+        tokio::time::timeout(REQUEST_TIMEOUT, rx)
+            .await
+            .map_err(|_| anyhow::anyhow!("no connection to {} after {:?}", peer, REQUEST_TIMEOUT))?
+            .map_err(|_| anyhow::anyhow!("Node event loop stopped"))?
+            .map_err(|e| anyhow::anyhow!("{}", e).into())
     }
 
     /// Records where `peer` listens; the first request to it dials there.
@@ -285,6 +302,8 @@ pub struct CleiMeshNode {
     /// Calls to peers we are not connected to yet, sent once the connection
     /// opens (see `send_tool_request`).
     awaiting_connection: HashMap<PeerId, Vec<(ToolRequest, InvokeReply)>>,
+    /// `NodeHandle::connect` calls waiting for their dial.
+    awaiting_dial: HashMap<PeerId, Vec<ConnectReply>>,
     commands_tx: mpsc::UnboundedSender<Command>,
     commands_rx: Option<mpsc::UnboundedReceiver<Command>>,
     /// Inbound tool runs finished off the loop (see `spawn_execution`).
@@ -356,6 +375,7 @@ impl CleiMeshNode {
             sandbox,
             pending_requests: HashMap::new(),
             awaiting_connection: HashMap::new(),
+            awaiting_dial: HashMap::new(),
             commands_tx,
             commands_rx: Some(commands_rx),
             executions_tx,
@@ -651,6 +671,9 @@ impl CleiMeshNode {
                 for (request, reply) in self.awaiting_connection.remove(&peer_id).unwrap_or_default() {
                     self.send_tool_request(swarm, peer_id, request, reply);
                 }
+                for reply in self.awaiting_dial.remove(&peer_id).unwrap_or_default() {
+                    let _ = reply.send(Ok(()));
+                }
             }
             libp2p::swarm::SwarmEvent::OutgoingConnectionError { peer_id: Some(peer_id), error, .. } => {
                 tracing::warn!("Connection to {} failed: {}", peer_id, error);
@@ -686,6 +709,22 @@ impl CleiMeshNode {
     fn fail_awaiting(&mut self, peer: PeerId, error: &str) {
         for (_, reply) in self.awaiting_connection.remove(&peer).unwrap_or_default() {
             let _ = reply.send(Err(format!("cannot connect to {}: {}", peer, error)));
+        }
+        for reply in self.awaiting_dial.remove(&peer).unwrap_or_default() {
+            let _ = reply.send(Err(format!("cannot connect to {}: {}", peer, error)));
+        }
+    }
+
+    /// Dials `peer`, or joins the dial in flight, for `NodeHandle::connect`.
+    fn connect(&mut self, swarm: &mut Swarm<CleiMeshBehaviour>, peer: PeerId, reply: ConnectReply) {
+        if swarm.is_connected(&peer) {
+            let _ = reply.send(Ok(()));
+            return;
+        }
+        self.awaiting_dial.entry(peer).or_default().push(reply);
+        match swarm.dial(peer) {
+            Ok(()) | Err(libp2p::swarm::DialError::DialPeerConditionFalse(_)) => {}
+            Err(e) => self.fail_awaiting(peer, &e.to_string()),
         }
     }
 
@@ -935,6 +974,7 @@ impl CleiMeshNode {
     fn handle_command(&mut self, command: Command, swarm: &mut Swarm<CleiMeshBehaviour>) -> bool {
         match command {
             Command::Invoke { peer, request, reply } => self.send_tool_request(swarm, peer, request, reply),
+            Command::Connect { peer, reply } => self.connect(swarm, peer, reply),
             Command::AddPeerAddress { peer, addr } => add_peer_address(swarm, peer, addr),
             Command::ListenAddrs { reply } => {
                 let _ = reply.send(swarm.listeners().cloned().collect());

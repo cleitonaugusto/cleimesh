@@ -7,6 +7,7 @@ use clap::{Parser, Subcommand};
 mod doctor;
 mod mcp;
 mod ocsf;
+mod setup;
 use std::time::Duration;
 use std::path::{Path, PathBuf};
 use std::env;
@@ -131,6 +132,39 @@ enum Commands {
         /// Receipt log (default: ~/.local/share/cleimesh/receipts/receipts.jsonl)
         #[arg(long)]
         receipts: Option<PathBuf>,
+    },
+    /// Set up an agent to use CleiMesh safely, in one command: the node as
+    /// its own user and systemd service (sudo), the agent's tokens, CleiMesh
+    /// registered as its MCP server and its own file and shell tools turned
+    /// off. Shows the plan and asks first; run it again to renew the tokens.
+    /// Example: cleimesh setup openclaw --untrusted ~/mail/inbox --write ~/mail/out
+    Setup {
+        /// The agent to set up
+        agent: setup::Agent,
+        /// Directory the agent may read (repeatable); reading it does not taint
+        #[arg(long, value_name = "DIR")]
+        read: Vec<PathBuf>,
+        /// Directory with outside content, such as mail or downloads (repeatable): reading it taints the agent
+        #[arg(long, visible_alias = "nao-confiavel", value_name = "DIR")]
+        untrusted: Vec<PathBuf>,
+        /// Directory the agent may write (repeatable); refused while the agent is tainted
+        #[arg(long, value_name = "DIR")]
+        write: Vec<PathBuf>,
+        /// OS user the node runs as
+        #[arg(long = "node-user", default_value = "cleimesh")]
+        node_user: String,
+        /// Port the node listens on, on localhost
+        #[arg(long, default_value_t = 7400)]
+        port: u16,
+        /// How long the agent's tokens last, in days (1 to 90)
+        #[arg(long, visible_alias = "dias", default_value_t = 30)]
+        days: u64,
+        /// Show the plan and change nothing
+        #[arg(long)]
+        dry_run: bool,
+        /// Don't ask before running the plan
+        #[arg(long, short = 'y')]
+        yes: bool,
     },
 }
 
@@ -587,6 +621,12 @@ async fn run(cli: Cli) -> Result<()> {
             identity_key_path(client_identity, node_key::CLIENT_KEY_FILE)?,
             receipts_path(receipts)?,
         ).await?,
+        Commands::Setup { agent, read, untrusted, write, node_user, port, days, dry_run, yes } => setup::run(
+            setup::Options { agent, read, untrusted, write, user: node_user, port, days },
+            identity_key_path(None, node_key::CLIENT_KEY_FILE)?,
+            dry_run,
+            yes,
+        )?,
     }
 
     Ok(())
@@ -833,6 +873,30 @@ fn taint(cmd: TaintCommands) -> Result<()> {
     Ok(())
 }
 
+/// A client of the node at `addr` (ending in `/p2p/PEER_ID`) under the key
+/// at `holder_path`, with its event loop running: how `mcp serve --node`
+/// and `doctor` reach a node run as another user.
+async fn remote_node(addr: &str, holder_path: &Path) -> Result<(cleimesh_p2p::NodeHandle, cleimesh_p2p::PeerId)> {
+    let addr: cleimesh_p2p::Multiaddr = addr.parse().map_err(|e| anyhow::anyhow!("Invalid --node address {}: {}", addr, e))?;
+    let peer = match addr.iter().last() {
+        Some(cleimesh_p2p::multiaddr::Protocol::P2p(peer)) => peer,
+        _ => return Err(anyhow::anyhow!("--node {} must end in /p2p/PEER_ID, as `cleimesh start` prints it", addr).into()),
+    };
+    let config = P2PConfig {
+        listen_addresses: Vec::new(),
+        enable_mdns: false,
+        identity_key_path: Some(holder_path.to_path_buf()),
+        receipts_path: None,
+        ..P2PConfig::default()
+    };
+    let mut client = CleiMeshNode::new(config, AgentIdentity::new("cli-mcp"))?;
+    client.start().await?;
+    let handle = client.handle();
+    tokio::spawn(async move { client.run_event_loop().await });
+    handle.add_peer_address(peer, addr)?;
+    Ok((handle, peer))
+}
+
 /// stdout carries the MCP protocol, so nothing else may print there.
 async fn mcp_serve(tokens: Vec<PathBuf>, holder: Option<PathBuf>, node: Option<String>, identity: Option<PathBuf>, receipts: Option<PathBuf>) -> Result<()> {
     use rmcp::ServiceExt;
@@ -842,23 +906,7 @@ async fn mcp_serve(tokens: Vec<PathBuf>, holder: Option<PathBuf>, node: Option<S
         // The node runs elsewhere, as another OS user: this process never
         // opens its key, its receipt log or its taint state.
         Some(addr) => {
-            let addr: cleimesh_p2p::Multiaddr = addr.parse().map_err(|e| anyhow::anyhow!("Invalid --node address {}: {}", addr, e))?;
-            let peer = match addr.iter().last() {
-                Some(cleimesh_p2p::multiaddr::Protocol::P2p(peer)) => peer,
-                _ => return Err(anyhow::anyhow!("--node {} must end in /p2p/PEER_ID, as `cleimesh start` prints it", addr).into()),
-            };
-            let config = P2PConfig {
-                listen_addresses: Vec::new(),
-                enable_mdns: false,
-                identity_key_path: Some(holder_path.clone()),
-                receipts_path: None,
-                ..P2PConfig::default()
-            };
-            let mut client = CleiMeshNode::new(config, AgentIdentity::new("cli-mcp"))?;
-            client.start().await?;
-            let handle = client.handle();
-            tokio::spawn(async move { client.run_event_loop().await });
-            handle.add_peer_address(peer, addr)?;
+            let (handle, peer) = remote_node(&addr, &holder_path).await?;
             mcp::Backend::Remote { handle, peer }
         }
         None => {

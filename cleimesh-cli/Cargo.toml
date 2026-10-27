@@ -25,6 +25,7 @@ tracing-subscriber = { workspace = true }
 directories = { workspace = true }
 chrono = { workspace = true }
 json5 = "0.4"
+yaml-rust2 = "0.8"
 uuid = { workspace = true }
 rmcp = { version = "3.5.1", default-features = false, features = ["server", "transport-io", "client", "transport-child-process"] }
 

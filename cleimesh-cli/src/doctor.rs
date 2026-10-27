@@ -158,6 +158,55 @@ pub fn calls_remote_node(home: &Path) -> bool {
     })
 }
 
+/// The `--node` addresses the agents' CleiMesh entries call: Claude Code,
+/// OpenClaw (JSON) and Hermes (`mcp_servers` in YAML), each once.
+pub fn registered_nodes(home: &Path) -> Vec<String> {
+    let mut args: Vec<Vec<String>> = Vec::new();
+    for config in agent_configs(home).iter().filter_map(|f| read_json5(f)?.ok()) {
+        let mut found = Vec::new();
+        cleimesh_servers(&config, &mut found);
+        args.extend(found.iter().map(|s| s["args"].as_array().into_iter().flatten().filter_map(|a| a.as_str().map(str::to_string)).collect()));
+    }
+    let hermes = std::fs::read_to_string(home.join(".hermes").join("config.yaml")).unwrap_or_default();
+    for doc in yaml_rust2::YamlLoader::load_from_str(&hermes).unwrap_or_default() {
+        for server in doc["mcp_servers"].as_hash().into_iter().flat_map(|h| h.values()) {
+            let list: Vec<String> = server["args"].as_vec().into_iter().flatten().filter_map(|a| a.as_str().map(str::to_string)).collect();
+            let command = server["command"].as_str().unwrap_or_default();
+            if command.contains("cleimesh") || list.iter().any(|a| a.contains("cleimesh")) {
+                args.push(list);
+            }
+        }
+    }
+    let mut nodes = Vec::new();
+    for list in args {
+        for pair in list.windows(2).filter(|w| w[0] == "--node") {
+            if !nodes.contains(&pair[1]) {
+                nodes.push(pair[1].clone());
+            }
+        }
+    }
+    nodes
+}
+
+/// Whether the node at `addr` answers as the PeerId the address names. A
+/// node that restarted with another key, or is not running, leaves every
+/// agent call failing while the rest of the setup looks fine.
+pub async fn node_reachable(addr: &str, client_key: &Path) -> Check {
+    const WHAT: &str = "node";
+    let reached = async {
+        let (handle, peer) = crate::remote_node(addr, client_key).await?;
+        handle.connect(peer).await
+    };
+    match reached.await {
+        Ok(()) => check(Level::Ok, WHAT, format!("answers at {}", addr)),
+        Err(e) => check(
+            Level::Fail,
+            WHAT,
+            format!("your agents call {} but it does not answer as that node: {}; check `systemctl status cleimesh`, and if it now has another key run `cleimesh setup` again", addr, e),
+        ),
+    }
+}
+
 fn read_json5(path: &Path) -> Option<std::result::Result<Value, String>> {
     let text = std::fs::read_to_string(path).ok()?;
     Some(json5::from_str(&text).map_err(|e| e.to_string()))
@@ -202,8 +251,7 @@ pub fn claude_code(home: &Path) -> Option<Check> {
     Some(native_tools(WHAT, &on, "add them to \"permissions\": {\"deny\": [...]} in ~/.claude/settings.json"))
 }
 
-/// OpenClaw's own tools that reach files or a shell, as its tool policy names them.
-const OPENCLAW_NATIVE: [&str; 7] = ["read", "write", "edit", "apply_patch", "exec", "process", "ls"];
+use crate::setup::OPENCLAW_NATIVE;
 
 /// OpenClaw: CleiMesh registered in `~/.openclaw/openclaw.json`, and the
 /// native file and shell tools in `tools.deny`.
@@ -221,13 +269,22 @@ pub fn openclaw(home: &Path) -> Option<Check> {
     Some(native_tools(WHAT, &on, "add them to \"tools\": {\"deny\": [...]} in ~/.openclaw/openclaw.json"))
 }
 
-/// Hermes Agent: only whether CleiMesh is registered; its own tools are not
-/// checked yet, so say so instead of passing it.
+/// Hermes Agent: CleiMesh registered in `~/.hermes/config.yaml`, and its own
+/// terminal, file, browser and code toolsets off for the CLI.
 pub fn hermes(home: &Path) -> Option<Check> {
     let config = std::fs::read_to_string(home.join(".hermes").join("config.yaml")).ok()?;
-    config.contains("cleimesh").then(|| {
-        check(Level::Warn, "Hermes Agent", "CleiMesh is registered; doctor does not check Hermes' own terminal and file tools yet, so turn them off by hand")
-    })
+    if !config.contains("cleimesh") {
+        return None;
+    }
+    if !crate::setup::hermes_enabled(&config) {
+        return Some(check(
+            Level::Fail,
+            "Hermes Agent",
+            "CleiMesh is in ~/.hermes/config.yaml but disabled (Hermes saves it so when it cannot start it, for one without its MCP support): run `hermes setup`, then `hermes mcp test cleimesh`",
+        ));
+    }
+    let on = crate::setup::hermes_native_on(&config);
+    Some(native_tools("Hermes Agent", &on, &format!("run: hermes tools disable {}", on.join(" "))))
 }
 
 fn native_tools(what: &'static str, on: &[&str], fix: &str) -> Check {
@@ -250,6 +307,9 @@ pub async fn run(node_key_path: PathBuf, client_key_path: PathBuf, receipts_path
     let mut checks = vec![node, key("client key", &client_key_path)];
     checks.extend(receipts(&receipts_path, &node_key_path));
     checks.push(sandbox().await);
+    for addr in home.as_deref().map(registered_nodes).unwrap_or_default() {
+        checks.push(node_reachable(&addr, &client_key_path).await);
+    }
     let agents: Vec<Check> = home.iter().flat_map(|h| [claude_code(h), openclaw(h), hermes(h)]).flatten().collect();
     if agents.is_empty() {
         checks.push(check(Level::Ok, "agents", "no Claude Code, OpenClaw or Hermes Agent set up to use CleiMesh"));
@@ -269,4 +329,25 @@ pub async fn run(node_key_path: PathBuf, client_key_path: PathBuf, receipts_path
         return Err(anyhow::anyhow!("{} check(s) failed", failed).into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn registered_nodes_come_from_openclaw_and_hermes_once_each() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let (a, b) = ("/ip4/127.0.0.1/tcp/7400/p2p/A", "/ip4/127.0.0.1/tcp/7401/p2p/B");
+        std::fs::create_dir_all(home.join(".openclaw")).unwrap();
+        let openclaw = serde_json::json!({ "mcp": { "servers": { "cleimesh": { "command": "/usr/local/bin/cleimesh", "args": ["mcp", "serve", "--node", a] } } } });
+        std::fs::write(home.join(".openclaw").join("openclaw.json"), openclaw.to_string()).unwrap();
+        std::fs::create_dir_all(home.join(".hermes")).unwrap();
+        let hermes = format!(
+            "mcp_servers:\n  cleimesh:\n    command: /usr/local/bin/cleimesh\n    args: [mcp, serve, --node, \"{a}\"]\n  other:\n    command: /usr/local/bin/cleimesh\n    args: [mcp, serve, --node, \"{b}\"]\n  unrelated:\n    command: npx\n    args: [--node, \"/ip4/1.2.3.4/tcp/1/p2p/C\"]\n"
+        );
+        std::fs::write(home.join(".hermes").join("config.yaml"), hermes).unwrap();
+        assert_eq!(registered_nodes(home), [a, b]);
+    }
 }

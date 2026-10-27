@@ -93,7 +93,17 @@ Para experimentar sem a configuração, tire o `--node` e o `sudo -u cleimesh`: 
 
 ### Pelo OpenClaw, Hermes Agent e outros clientes MCP
 
-Qualquer agente que fale MCP por stdio usa o mesmo comando `mcp serve`. Mesmo nó e mesmo token de cima; use caminhos absolutos.
+Para o OpenClaw e o Hermes Agent no Linux, um comando faz tudo: o nó com usuário próprio e serviço systemd, os tokens do agente, o CleiMesh registrado como servidor MCP do agente e as ferramentas próprias de arquivo e shell do agente desligadas. Ele mostra o plano e pergunta antes; o `sudo` pede sua senha nos passos de sistema.
+
+```sh
+cleimesh setup openclaw --nao-confiavel ~/mail/entrada --write ~/mail/saida --dry-run   # o plano, nada muda
+cleimesh setup openclaw --nao-confiavel ~/mail/entrada --write ~/mail/saida             # ou: cleimesh setup hermes ...
+cleimesh doctor
+```
+
+`--read` concede uma pasta, `--nao-confiavel` concede uma cujo conteúdo contamina o agente (e-mail, downloads), `--write` concede uma que é recusada depois que o agente se contamina. Rode o mesmo comando de novo para renovar os tokens (30 dias por padrão, `--dias`). O Hermes precisa do suporte a MCP dele instalado (`hermes setup`); sem ele, o Hermes salva o servidor desativado e o `setup` para antes de desligar as ferramentas próprias do Hermes. Detalhes em [docs/uso.md](docs/uso.md#configurar-um-agente).
+
+À mão, ou para qualquer outro agente que fale MCP por stdio, use o mesmo comando `mcp serve`. Mesmo nó e mesmo token de cima; use caminhos absolutos.
 
 ```sh
 # OpenClaw

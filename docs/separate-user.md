@@ -19,6 +19,10 @@ shell tools, for example) or for trying things out.
 
 ## Setup (Linux)
 
+For OpenClaw and Hermes Agent, `cleimesh setup openclaw|hermes` runs these
+steps for you and also turns off the agent's own file and shell tools
+([usage](usage.md#set-up-an-agent)). By hand:
+
 1. **Install the binary where the agent can't replace it.** A node running
    `~/.cargo/bin/cleimesh` runs whatever your user puts there.
 
@@ -65,7 +69,9 @@ shell tools, for example) or for trying things out.
    ```
 
    Files the tools write belong to `cleimesh` (mode 644): you can read them,
-   and copy them to edit.
+   and copy them to edit. Running `setfacl -R` again fails on them; to grant
+   again, touch only what you own:
+   `find ~/proj/out -user "$(id -u)" -exec setfacl -m u:cleimesh:rwX {} +`.
 
 5. **Issue the agent's token as the node's user** (you, not the agent:
    `sudo` asks for your password). `sudo -u cleimesh` uses
@@ -118,3 +124,12 @@ the agent's user could not read the node key, list the receipts or clear its
 taint; the mail scenario ran end to end through `mcp serve --node` (write
 allowed, mail read, write refused, cleared by the node's user with the node
 stopped, write allowed again); `audit verify` passed on the node's log.
+
+`cleimesh setup openclaw` and `cleimesh setup hermes`, 2026-10-27, in
+throwaway Debian trixie containers with systemd as init (OpenClaw 2026.10.7,
+Hermes Agent c714c424), with a user that has `sudo`: first run, `doctor`,
+the mail scenario through `mcp serve` with the exact arguments the agent
+registered (write allowed, mail read, write refused with the receipt cited),
+`audit verify`, and a second run renewing the tokens (with OpenClaw, the
+taint was checked to survive it). With Hermes lacking its MCP support,
+`setup` stopped with Hermes' own tools still on and `doctor` failed.

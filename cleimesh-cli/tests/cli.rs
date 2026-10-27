@@ -559,7 +559,42 @@ fn doctor_reads_project_scope_and_knows_a_remote_node() {
     let shared = serde_json::json!({ "mcpServers": { "cleimesh": { "command": "cleimesh",
         "args": ["mcp", "serve", "--node", "/ip4/127.0.0.1/tcp/7400/p2p/12D3KooW", "--token", "t.json"] } } });
     std::fs::write(project.join(".mcp.json"), shared.to_string()).unwrap();
+    let out = doctor(home);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("warn  Claude Code") && text.contains("own Bash, Read"), "{text}");
+    assert!(text.contains("ok    node key") && text.contains("sudo -u cleimesh cleimesh doctor"), "{text}");
+    // No node behind that address.
+    assert!(!out.status.success() && text.contains("FAIL  node"), "{text}");
+}
+
+// RE1: in a Docker run of `cleimesh setup`, the node came up with a key other
+// than the one the agent's entry named, and every call failed while doctor
+// said ok. Now doctor dials each registered --node, leaving no receipt there.
+#[test]
+fn doctor_fails_when_the_registered_node_does_not_answer_as_itself() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path();
+    let node_key = home.join("other").join("node.key");
+    let (_node, addr) = start_node(&node_key);
+    let openclaw = |addr: &str| {
+        let config = serde_json::json!({ "mcp": { "servers": { "cleimesh": { "command": "/usr/local/bin/cleimesh",
+            "args": ["mcp", "serve", "--node", addr, "--token", "t.json"] } } },
+            "tools": { "deny": ["read", "write", "edit", "apply_patch", "exec", "process", "ls"] } });
+        std::fs::create_dir_all(home.join(".openclaw")).unwrap();
+        std::fs::write(home.join(".openclaw").join("openclaw.json"), config.to_string()).unwrap();
+    };
+
+    openclaw(&addr);
     let out = stdout(&doctor(home));
-    assert!(out.contains("warn  Claude Code") && out.contains("own Bash, Read"), "{out}");
-    assert!(out.contains("ok    node key") && out.contains("sudo -u cleimesh cleimesh doctor"), "{out}");
+    assert!(out.contains(&format!("ok    node         answers at {addr}")), "{out}");
+
+    // Same address, another PeerId: the node restarted with a new key.
+    let (at, _) = addr.rsplit_once("/p2p/").unwrap();
+    let stale = format!("{at}/p2p/{}", peer_id(&home.join("stale.key")));
+    openclaw(&stale);
+    let out = doctor(home);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(!out.status.success() && text.contains("FAIL  node") && text.contains("cleimesh setup"), "{text}");
+
+    assert!(!receipts_of(&node_key).exists() || std::fs::read_to_string(receipts_of(&node_key)).unwrap().is_empty(), "doctor left a receipt on the node");
 }

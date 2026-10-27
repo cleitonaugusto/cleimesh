@@ -50,6 +50,23 @@ cleimesh audit prune --antes 2026-01-01 --dry-run    # retenção, deixando o re
 
 Flags de token: sandbox `--read DIR`, `--write DIR`, `--network`, `--max-instructions N`, `--max-memory BYTES`, `--timeout-ms MS`, limitadas a uma tool com `--sandbox-for TOOL`; fluxo `--taints`, `--clean-only`; restrições de argumento `--tools '{"echo":{"message":{"constraint_type":"exact","value":"oi"}}}'`.
 
+## Configurar um agente
+
+```sh
+cleimesh setup openclaw --read ~/code/proj --nao-confiavel ~/mail/entrada --write ~/mail/saida --dry-run
+cleimesh setup hermes --nao-confiavel ~/mail/entrada --write ~/mail/saida
+```
+
+No Linux, para o OpenClaw e o Hermes Agent, o `setup` faz o que o [separate-user.md](separate-user.md) descreve à mão:
+
+- como root (`sudo`): instala o binário em `/usr/local/bin`, cria o usuário `cleimesh` e roda o nó como serviço systemd em `127.0.0.1:7400` (`--node-user`, `--port`);
+- como você: deixa o `cleimesh` alcançar as pastas concedidas com ACLs (só nas entradas que são suas, então arquivos que o nó escreveu não travam uma segunda execução) e faz o nó emitir os tokens do agente em `~/.config/cleimesh/<agente>/` (modo `0600`): `read.json`, `untrusted.json` (ler contamina), `write.json` (só limpo);
+- registra `cleimesh mcp serve --node ...` como servidor MCP do agente e desliga as ferramentas próprias dele: no OpenClaw, `tools.deny` (read, write, edit, apply_patch, exec, process, ls); no Hermes, os toolsets `terminal`, `file`, `browser`, `code_execution` e `computer_use`.
+
+Mostra cada comando com o usuário que o executa e pergunta antes de rodar (`-y` pula a pergunta). Rode de novo para renovar os tokens (30 dias por padrão, `--dias`): a contaminação fica no nó, então um agente contaminado continua contaminado. `--read` e `--nao-confiavel` juntos ainda são recusados.
+
+O Hermes precisa do suporte a MCP dele (`hermes setup`, ou `uv sync --extra mcp` no checkout). Sem ele, o `hermes mcp add` não consegue iniciar o servidor e o salva desativado; o `setup` então para antes de desligar as ferramentas próprias do Hermes, para o agente não ficar sem ferramenta nenhuma, e o `doctor` acusa a entrada desativada.
+
 ## Conferir a instalação
 
 ```sh
@@ -60,7 +77,7 @@ cleimesh doctor
 # warn  OpenClaw     uses CleiMesh, but its own exec, process tool(s) are still on and bypass it; add them to "tools": {"deny": [...]} in ~/.openclaw/openclaw.json
 ```
 
-Chaves (existem, `0600`), o log de recibos (verifica, tem cabeça assinada), o sandbox e cada agente com o CleiMesh registrado (Claude Code, OpenClaw; do Hermes Agent, só o registro): um agente que mantém as próprias ferramentas de arquivo ou shell faz o que o token recusa, sem recibo. O Claude Code é lido em todos os escopos (usuário, local e o `.mcp.json` do projeto). Quando os agentes chamam um nó que roda como outro usuário (`--node`), as chaves e o log do nó não são seus: confira-os com `sudo -u cleimesh cleimesh doctor`. Não altera nada; só sai com erro quando algo falha.
+Chaves (existem, `0600`), o log de recibos (verifica, tem cabeça assinada), o sandbox e cada agente com o CleiMesh registrado (Claude Code, OpenClaw, Hermes Agent): um agente que mantém as próprias ferramentas de arquivo ou shell faz o que o token recusa, sem recibo. Cada nó que os agentes chamam com `--node` é discado: falha se nada responder ou se responder outro nó (ele reiniciou com outra chave, e toda chamada falharia); a discagem não faz chamada, então não deixa recibo lá. O Claude Code é lido em todos os escopos (usuário, local e o `.mcp.json` do projeto). Quando os agentes chamam um nó que roda como outro usuário (`--node`), as chaves e o log do nó não são seus: confira-os com `sudo -u cleimesh cleimesh doctor`. Não altera nada; só sai com erro quando algo falha.
 
 ## Escrevendo uma tool (ABI v1)
 

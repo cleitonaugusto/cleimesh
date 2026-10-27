@@ -90,6 +90,31 @@ async fn paths_outside_allowed_dir_are_blocked() {
     }
 }
 
+// A symlink inside the granted directory, to a file or a directory outside
+// it, does not let the tools out: neither a read nor a write through it.
+#[cfg(unix)]
+#[tokio::test]
+async fn symlinks_out_of_allowed_dir_are_blocked() {
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let secret = outside.path().join("secret.txt");
+    std::fs::write(&secret, "secret").unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::os::unix::fs::symlink(&secret, root.join("link.txt")).unwrap();
+    std::os::unix::fs::symlink(outside.path(), root.join("linkdir")).unwrap();
+    let sb = sandbox(with_dir(dir.path(), true));
+
+    for path in [root.join("link.txt"), root.join("linkdir/secret.txt")] {
+        let err = run(&sb, "file_read", json!({"path": path})).await.unwrap_err();
+        assert!(err.contains("cannot read"), "{err}");
+        let err = run(&sb, "file_write", json!({"path": path, "content": "x"})).await.unwrap_err();
+        assert!(err.contains("cannot write"), "{err}");
+    }
+    assert!(run(&sb, "file_write", json!({"path": root.join("linkdir/new.txt"), "content": "x"})).await.is_err());
+    assert_eq!(std::fs::read_to_string(&secret).unwrap(), "secret");
+    assert!(!outside.path().join("new.txt").exists());
+}
+
 /// A guest that never returns must be stopped by the wall-clock timeout.
 #[tokio::test]
 async fn infinite_loop_times_out() {

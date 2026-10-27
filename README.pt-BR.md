@@ -193,7 +193,7 @@ cleimesh taint clear <peer-id-do-agente> --motivo "e-mail revisado"   # decisão
 
 ### Custo
 
-Preliminar, num desktop em uso (i7-10750H); reproduza com [`scripts/bench.sh`](scripts/bench.sh), tabela completa em [`docs/benchmarks.md`](docs/benchmarks.md):
+Preliminar, num notebook em uso (i7-10750H); reproduza com [`scripts/bench.sh`](scripts/bench.sh), tabela completa em [`docs/benchmarks.md`](docs/benchmarks.md):
 
 | | Mediana |
 |---|---|

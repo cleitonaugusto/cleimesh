@@ -193,7 +193,7 @@ cleimesh taint clear <agent-peer-id> --reason "mail reviewed"   # a human decisi
 
 ### Cost
 
-Preliminary, on a busy desktop (i7-10750H); reproduce with [`scripts/bench.sh`](scripts/bench.sh), full table in [`docs/benchmarks.md`](docs/benchmarks.md):
+Preliminary, on a busy laptop (i7-10750H); reproduce with [`scripts/bench.sh`](scripts/bench.sh), full table in [`docs/benchmarks.md`](docs/benchmarks.md):
 
 | | Median |
 |---|---|

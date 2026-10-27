@@ -670,7 +670,7 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
 name = "cleimesh-aat"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "base64 0.22.1",
  "criterion",
@@ -687,7 +687,7 @@ dependencies = [
 
 [[package]]
 name = "cleimesh-cli"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -713,7 +713,7 @@ dependencies = [
 
 [[package]]
 name = "cleimesh-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "bytes",
@@ -724,7 +724,7 @@ dependencies = [
 
 [[package]]
 name = "cleimesh-observability"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -746,7 +746,7 @@ dependencies = [
 
 [[package]]
 name = "cleimesh-p2p"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -775,7 +775,7 @@ dependencies = [
 
 [[package]]
 name = "cleimesh-receipt"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "criterion",
  "ed25519-dalek 2.2.0",
@@ -789,7 +789,7 @@ dependencies = [
 
 [[package]]
 name = "cleimesh-wasm-sandbox"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "bytes",

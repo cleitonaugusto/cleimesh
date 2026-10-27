@@ -36,7 +36,11 @@ function reply(body) {
       const catalog = searches.map(text).join("\n") + JSON.stringify(body.tools || []);
       const found = catalog.match(new RegExp(`[\\w.:/-]*__${step.tool}\\b`));
       const schema = (body.tools.find((t) => t.function.name === "tool_call").function.parameters || {}).properties || {};
-      if (!found) return { tool: { id: `call_${n}`, name: "tool_search", arguments: JSON.stringify({ query: step.tool.replace("_", " ") }) } };
+      // Newer Hermes takes a list of queries; older Hermes and OpenClaw one.
+      const search = ((body.tools.find((t) => t.function.name === "tool_search") || {}).function || {}).parameters || {};
+      const query = step.tool.replace("_", " ");
+      const searchArgs = (search.properties || {}).queries ? { queries: [query] } : { query };
+      if (!found) return { tool: { id: `call_${n}`, name: "tool_search", arguments: JSON.stringify(searchArgs) } };
       const args = schema.calls ? { calls: [{ name: found[0], arguments: step.args }] } : { id: found[0], args: step.args };
       return { tool: { id: `call_${n}`, name: "tool_call", arguments: JSON.stringify(args) } };
     }

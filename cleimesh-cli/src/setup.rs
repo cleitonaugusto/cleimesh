@@ -313,6 +313,7 @@ fn show(steps: &[Step]) {
 }
 
 /// Writes a file only you can read (`0600`), also when it already exists.
+#[cfg(unix)]
 fn write_private(path: &Path, text: &str) -> std::io::Result<()> {
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(path)?;
@@ -332,10 +333,18 @@ fn absolute(dirs: &[PathBuf]) -> anyhow::Result<Vec<PathBuf>> {
     dirs.iter().map(|d| std::fs::canonicalize(d).map_err(|e| anyhow::anyhow!("{}: {}", d.display(), e))).collect()
 }
 
+#[cfg(unix)]
 pub fn run(mut o: Options, client_key: PathBuf, dry_run: bool, yes: bool) -> cleimesh_core::Result<()> {
     run_inner(&mut o, client_key, dry_run, yes).map_err(Into::into)
 }
 
+// The plan is sudo, systemd, setfacl and file modes: Linux only for now.
+#[cfg(not(unix))]
+pub fn run(_: Options, _: PathBuf, _: bool, _: bool) -> cleimesh_core::Result<()> {
+    Err(anyhow::anyhow!("cleimesh setup runs on Linux (sudo, systemd, setfacl); see docs/separate-user.md").into())
+}
+
+#[cfg(unix)]
 fn run_inner(o: &mut Options, client_key: PathBuf, dry_run: bool, yes: bool) -> anyhow::Result<()> {
     if o.read.is_empty() && o.untrusted.is_empty() && o.write.is_empty() {
         anyhow::bail!("grant at least one directory: --read, --untrusted or --write");
@@ -492,6 +501,7 @@ mod tests {
         assert!(steps.iter().any(|s| s.argv == ["find", "/home/ana/mail/out", "-type", "d", "-user", "1000", "-exec", "setfacl", "-d", "-m", "u:cleimesh:rwX", "{}", "+"]));
     }
 
+    #[cfg(unix)]
     #[test]
     fn tokens_are_written_for_you_alone_even_over_an_old_file() {
         use std::os::unix::fs::PermissionsExt;

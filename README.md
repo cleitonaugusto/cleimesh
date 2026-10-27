@@ -65,6 +65,14 @@ Inside such a sandbox the node's host usually has a name rather than an IP; `--n
 
 <img src="docs/assets/mascot/kempi.svg" align="right" width="150" alt="Kempi, the CleiMesh mascot: a cubist chess automaton with a keyhole on its cabinet door">
 
+To install the binary on Linux or macOS (checks its SHA-256, no root, one file in `~/.local/bin`; for Windows, download the `.exe` from the [releases](https://github.com/cleitonaugusto/cleimesh/releases/latest)):
+
+```sh
+curl -fsSL https://github.com/cleitonaugusto/cleimesh/releases/latest/download/install.sh | sh
+```
+
+The demo runs from a clone of this repository, with no install:
+
 ```sh
 cargo build -p cleimesh-cli
 CLEIMESH=target/debug/cleimesh examples/demo/demo.sh

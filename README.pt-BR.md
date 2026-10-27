@@ -65,6 +65,14 @@ Dentro de um sandbox desses, a máquina do nó costuma ter nome em vez de IP; `-
 
 <img src="docs/assets/mascot/kempi.svg" align="right" width="150" alt="Kempi, o mascote do CleiMesh: um autômato de xadrez cubista com uma fechadura na porta do gabinete">
 
+Para instalar o binário no Linux ou no macOS (confere o SHA-256, sem root, um arquivo em `~/.local/bin`; no Windows, baixe o `.exe` nas [releases](https://github.com/cleitonaugusto/cleimesh/releases/latest)):
+
+```sh
+curl -fsSL https://github.com/cleitonaugusto/cleimesh/releases/latest/download/install.sh | sh
+```
+
+A demo roda de um clone deste repositório, sem instalar nada:
+
 ```sh
 cargo build -p cleimesh-cli
 CLEIMESH=target/debug/cleimesh examples/demo/demo.sh

@@ -242,6 +242,12 @@ Every command in it runs against the `cleimesh` binary before each edition, and 
 
 The free sample shows the cover and the full table of contents. There is no publisher behind it, so if it helps you, an honest review goes a long way.
 
+## Support and security reviews
+
+CleiMesh is built by one person. If it saves you work, [GitHub Sponsors](https://github.com/sponsors/cleitonaugusto) keeps it going.
+
+I also review AI agent setups and their plugins for paths around their permissions: what an injected prompt can reach, which tools bypass the sandbox, what the logs can and cannot prove. A recent one: [GHSA-mgf8-gh7g-q4rg](https://github.com/otsoa-dubief/airlock/security/advisories/GHSA-mgf8-gh7g-q4rg), in airlock, fixed in 0.2.3. For a review or paid support: augusto.cleiton@gmail.com.
+
 ## Development
 
 ```sh

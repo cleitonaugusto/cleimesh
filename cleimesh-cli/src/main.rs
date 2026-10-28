@@ -159,6 +159,9 @@ enum Commands {
         /// How long the agent's tokens last, in days (1 to 90)
         #[arg(long, visible_alias = "dias", default_value_t = 30)]
         days: u64,
+        /// Hermes only: keep its terminal and browser on, guarded by the airlock plugin (which must be enabled), and admit CleiMesh's tools in airlock's policy
+        #[arg(long)]
+        with_airlock: bool,
         /// Show the plan and change nothing
         #[arg(long)]
         dry_run: bool,
@@ -621,8 +624,8 @@ async fn run(cli: Cli) -> Result<()> {
             identity_key_path(client_identity, node_key::CLIENT_KEY_FILE)?,
             receipts_path(receipts)?,
         ).await?,
-        Commands::Setup { agent, read, untrusted, write, node_user, port, days, dry_run, yes } => setup::run(
-            setup::Options { agent, read, untrusted, write, user: node_user, port, days },
+        Commands::Setup { agent, read, untrusted, write, node_user, port, days, with_airlock, dry_run, yes } => setup::run(
+            setup::Options { agent, read, untrusted, write, user: node_user, port, days, with_airlock },
             identity_key_path(None, node_key::CLIENT_KEY_FILE)?,
             dry_run,
             yes,

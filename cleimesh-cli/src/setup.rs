@@ -37,6 +37,10 @@ impl Agent {
 pub const OPENCLAW_NATIVE: [&str; 7] = ["read", "write", "edit", "apply_patch", "exec", "process", "ls"];
 /// Hermes' toolsets that reach files, a shell, a browser or the desktop.
 pub const HERMES_NATIVE: [&str; 5] = ["terminal", "file", "browser", "code_execution", "computer_use"];
+/// Hermes toolsets the airlock plugin guards, kept on with `--with-airlock`.
+pub const AIRLOCK_GUARDS: [&str; 2] = ["terminal", "browser"];
+/// airlock policy that admits CleiMesh's MCP tools, written when there is none.
+pub const AIRLOCK_POLICY: &str = "tools:\n  admitted_mcp_servers: [cleimesh]\n";
 
 #[derive(Clone, Debug)]
 pub struct Options {
@@ -50,6 +54,8 @@ pub struct Options {
     pub user: String,
     pub port: u16,
     pub days: u64,
+    /// Hermes only: keep its terminal and browser, guarded by airlock.
+    pub with_airlock: bool,
 }
 
 /// What was found on the machine before planning.
@@ -220,9 +226,16 @@ pub fn agent_steps(o: &Options, serve: &[String], registered: bool, openclaw_con
             // `hermes_enabled`, checked right after this step.
             s.stdin = Some("Y\n".into());
             steps.push(s);
+            let kept: &[&str] = if o.with_airlock { &AIRLOCK_GUARDS } else { &[] };
+            if !kept.is_empty() {
+                let mut on = vec!["hermes", "tools", "enable"];
+                on.extend(kept);
+                steps.push(step("keep Hermes' terminal and browser on: airlock guards them", &on));
+            }
             let mut off = vec!["hermes", "tools", "disable"];
-            off.extend(HERMES_NATIVE);
-            steps.push(step("turn off Hermes' own terminal, file, browser and code tools", &off));
+            off.extend(HERMES_NATIVE.iter().filter(|t| !kept.contains(t)));
+            let what = if kept.is_empty() { "turn off Hermes' own terminal, file, browser and code tools" } else { "turn off Hermes' own file and code tools" };
+            steps.push(step(what, &off));
         }
     }
     steps
@@ -239,6 +252,26 @@ pub fn hermes_enabled(config: &str) -> bool {
         let runs = mentions(&s["command"]) || s["args"].as_vec().is_some_and(|a| a.iter().any(mentions));
         runs && s["enabled"].as_bool() != Some(false)
     })
+}
+
+fn yaml_list_has(text: &str, path: &[&str], item: &str) -> bool {
+    let docs = yaml_rust2::YamlLoader::load_from_str(text).unwrap_or_default();
+    let Some(mut node) = docs.first() else { return false };
+    for key in path {
+        node = &node[*key];
+    }
+    node.as_vec().is_some_and(|v| v.iter().any(|x| x.as_str() == Some(item)))
+}
+
+/// Whether the airlock plugin is enabled in `~/.hermes/config.yaml`.
+pub fn airlock_enabled(config: &str) -> bool {
+    yaml_list_has(config, &["plugins", "enabled"], "airlock")
+}
+
+/// Whether airlock's policy (`~/.hermes/airlock.yaml`) admits CleiMesh's MCP
+/// server; until then airlock asks the owner for each of its calls.
+pub fn airlock_admits_cleimesh(policy: &str) -> bool {
+    yaml_list_has(policy, &["tools", "admitted_mcp_servers"], "cleimesh")
 }
 
 /// Hermes' own toolsets still on for the CLI, from `~/.hermes/config.yaml`.
@@ -378,6 +411,27 @@ fn run_inner(o: &mut Options, client_key: PathBuf, dry_run: bool, yes: bool) -> 
     let registered = config_text.contains("cleimesh");
     let openclaw_config: Value = json5::from_str(&config_text).unwrap_or(Value::Null);
     let addr_shown = format!("/ip4/127.0.0.1/tcp/{}/p2p/<NODE_ID>", o.port);
+    let mut airlock = Vec::new();
+    if o.with_airlock {
+        if o.agent != Agent::Hermes {
+            anyhow::bail!("--with-airlock is for Hermes: airlock is a Hermes plugin");
+        }
+        if !airlock_enabled(&config_text) {
+            anyhow::bail!("airlock is not enabled in Hermes: run `hermes plugins install airlock --enable` first, or drop --with-airlock");
+        }
+        let policy = home.join(".hermes").join("airlock.yaml");
+        match std::fs::read_to_string(&policy) {
+            Err(_) => {
+                let path = policy.to_string_lossy();
+                let mut s = step(format!("let airlock admit CleiMesh's tools ({})", path), &["tee", &path]);
+                s.stdin = Some(AIRLOCK_POLICY.into());
+                airlock.push(s);
+            }
+            Ok(text) if airlock_admits_cleimesh(&text) => {}
+            // Never rewrite the owner's policy.
+            Ok(_) => anyhow::bail!("{} does not admit CleiMesh: add `cleimesh` to tools.admitted_mcp_servers there, then run this again", policy.display()),
+        }
+    }
 
     println!("cleimesh setup {}: the node runs as `{}`, the agent reaches it only through `mcp serve --node`.\n", o.agent.name(), o.user);
     println!("As root (sudo asks for your password):");
@@ -388,6 +442,7 @@ fn run_inner(o: &mut Options, client_key: PathBuf, dry_run: bool, yes: bool) -> 
     for (file, args) in token_args(o, "<AGENT_ID>") {
         println!("      sudo -u {} -H {} {}  > {}", o.user, BIN, args.join(" "), file);
     }
+    show(&airlock);
     show(&agent_steps(o, &serve_args(&addr_shown, &token_files), registered, &openclaw_config));
     println!("  - check it all: cleimesh doctor\n");
     if dry_run {
@@ -429,6 +484,7 @@ fn run_inner(o: &mut Options, client_key: PathBuf, dry_run: bool, yes: bool) -> 
         files.push(path);
     }
     let addr = format!("/ip4/127.0.0.1/tcp/{}/p2p/{}", o.port, node_id);
+    airlock.iter().try_for_each(run_step)?;
     for s in agent_steps(o, &serve_args(&addr, &files), registered, &openclaw_config) {
         run_step(&s)?;
         // Stop before turning Hermes' own tools off, or it would have none.
@@ -459,6 +515,7 @@ mod tests {
             user: "cleimesh".into(),
             port: 7400,
             days: 30,
+            with_airlock: false,
         }
     }
 
@@ -551,6 +608,25 @@ mod tests {
         assert_eq!(steps[1].argv[3..], HERMES_NATIVE);
         let again = agent_steps(&opts(Agent::Hermes), &serve, true, &Value::Null);
         assert_eq!((again[0].argv[2].as_str(), again[0].stdin.as_deref()), ("remove", Some("y\n")));
+    }
+
+    #[test]
+    fn with_airlock_hermes_keeps_terminal_and_browser_and_turns_the_rest_off() {
+        let serve = serve_args("/ip4/127.0.0.1/tcp/7400/p2p/N", &[]);
+        let steps = agent_steps(&Options { with_airlock: true, ..opts(Agent::Hermes) }, &serve, false, &Value::Null);
+        assert_eq!(steps[1].argv, ["hermes", "tools", "enable", "terminal", "browser"]);
+        assert_eq!(steps[2].argv[3..], ["file", "code_execution", "computer_use"]);
+    }
+
+    #[test]
+    fn airlock_counts_when_enabled_and_admitting_cleimesh() {
+        assert!(airlock_enabled("plugins:\n  enabled:\n    - airlock\n  disabled: []\n"));
+        assert!(!airlock_enabled("plugins:\n  enabled: []\n  disabled: [airlock]\n"));
+        assert!(!airlock_enabled(""));
+        assert!(airlock_admits_cleimesh(AIRLOCK_POLICY));
+        assert!(airlock_admits_cleimesh("tools:\n  admitted_mcp_servers:\n    - github\n    - cleimesh\n"));
+        assert!(!airlock_admits_cleimesh("tools:\n  admitted_mcp_servers: [github]\n"));
+        assert!(!airlock_admits_cleimesh("mode: observe\n"));
     }
 
     // Seen in Docker: without Hermes' MCP support, the "Y" meant for

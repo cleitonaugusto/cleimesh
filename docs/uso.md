@@ -67,6 +67,32 @@ Mostra cada comando com o usuário que o executa e pergunta antes de rodar (`-y`
 
 O Hermes precisa do suporte a MCP dele (`hermes setup`, ou `uv sync --extra mcp` no checkout). Sem ele, o `hermes mcp add` não consegue iniciar o servidor e o salva desativado; o `setup` então para antes de desligar as ferramentas próprias do Hermes, para o agente não ficar sem ferramenta nenhuma, e o `doctor` acusa a entrada desativada.
 
+### Usando com o airlock
+
+O [airlock](https://github.com/otsoa-dubief/airlock) é um plugin do Hermes que confere cada chamada de ferramenta dentro do Hermes e pede aprovação do dono antes das arriscadas. Os dois cobrem camadas diferentes e podem rodar juntos: o airlock vigia o terminal e o navegador do Hermes; o CleiMesh faz o trabalho com arquivos no sandbox dele, como outro usuário do sistema, com recibo assinado para cada chamada.
+
+```sh
+hermes plugins install airlock --enable
+cleimesh setup hermes --nao-confiavel ~/mail/entrada --write ~/mail/saida --with-airlock
+```
+
+Com `--with-airlock`, o `setup` mantém ligados o `terminal` e o `browser` do Hermes e desliga só `file`, `code_execution` e `computer_use`. Também faz o airlock admitir as ferramentas do CleiMesh: se `~/.hermes/airlock.yaml` não existe, escreve um com `tools.admitted_mcp_servers: [cleimesh]`; uma política existente nunca é reescrita, e o `setup` para se ela não admitir o `cleimesh` (acrescente lá e rode de novo). Recusa rodar se o airlock não estiver habilitado no Hermes, e com qualquer agente que não seja o Hermes.
+
+Assim, ler o e-mail envenenado pelo CleiMesh contamina os dois: a próxima escrita do CleiMesh é recusada pelo nó com recibo, e um `curl -d @mail.txt` pelo terminal fica retido pelo airlock até o dono aprovar. O `doctor` aceita o terminal e o navegador só enquanto o airlock estiver habilitado e admitindo o CleiMesh:
+
+```sh
+cleimesh doctor
+# ok    Hermes Agent uses CleiMesh for files; its own terminal, browser stay on, guarded by airlock
+```
+
+O que cada um não faz:
+
+- O terminal ainda alcança arquivos diretamente, fora das pastas que o token concede, e essas chamadas não deixam recibo do CleiMesh. O airlock as julga pela cara do comando e pela contaminação da sessão; as garantias do CleiMesh valem só para as chamadas que passam por ele.
+- O airlock não olha dentro dos argumentos de MCP: para ele, uma escrita do CleiMesh em `~/.ssh` é uma chamada normal; quem recusa é o sandbox do CleiMesh.
+- O CleiMesh ainda não tem aprovação humana por chamada; o airlock tem.
+
+Se você precisa das garantias do CleiMesh para tudo o que o agente faz, deixe o `--with-airlock` de fora: aí as ferramentas próprias do Hermes ficam todas desligadas.
+
 ## Conferir a instalação
 
 ```sh

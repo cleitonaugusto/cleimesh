@@ -284,6 +284,13 @@ pub fn hermes(home: &Path) -> Option<Check> {
         ));
     }
     let on = crate::setup::hermes_native_on(&config);
+    // `cleimesh setup hermes --with-airlock`: the terminal and browser stay
+    // on, and the airlock plugin guards them.
+    let policy = std::fs::read_to_string(home.join(".hermes").join("airlock.yaml")).unwrap_or_default();
+    let guarded = !on.is_empty() && on.iter().all(|t| crate::setup::AIRLOCK_GUARDS.contains(t));
+    if guarded && crate::setup::airlock_enabled(&config) && crate::setup::airlock_admits_cleimesh(&policy) {
+        return Some(check(Level::Ok, "Hermes Agent", format!("uses CleiMesh for files; its own {} stay on, guarded by airlock", on.join(", "))));
+    }
     Some(native_tools("Hermes Agent", &on, &format!("run: hermes tools disable {}", on.join(" "))))
 }
 
@@ -334,6 +341,27 @@ pub async fn run(node_key_path: PathBuf, client_key_path: PathBuf, receipts_path
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // `setup hermes --with-airlock` keeps the terminal and browser on: fine
+    // only while airlock is enabled and admits CleiMesh.
+    #[test]
+    fn hermes_terminal_and_browser_are_ok_only_with_airlock_guarding_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let hermes = dir.path().join(".hermes");
+        std::fs::create_dir_all(&hermes).unwrap();
+        let base = "mcp_servers:\n  cleimesh:\n    command: /usr/local/bin/cleimesh\n    args: [mcp, serve]\nplatform_toolsets:\n  cli: [terminal, browser, web]\n";
+        let level = |config: &str| {
+            std::fs::write(hermes.join("config.yaml"), config).unwrap();
+            super::hermes(dir.path()).unwrap().level
+        };
+        assert_eq!(level(base), Level::Warn);
+        let with_airlock = format!("{base}plugins:\n  enabled: [airlock]\n");
+        assert_eq!(level(&with_airlock), Level::Warn, "airlock does not admit CleiMesh yet");
+        std::fs::write(hermes.join("airlock.yaml"), crate::setup::AIRLOCK_POLICY).unwrap();
+        assert_eq!(level(&with_airlock), Level::Ok);
+        let file_on = with_airlock.replace("[terminal, browser, web]", "[terminal, browser, file]");
+        assert_eq!(level(&file_on), Level::Warn, "airlock does not cover Hermes' file tools for us");
+    }
 
     #[test]
     fn registered_nodes_come_from_openclaw_and_hermes_once_each() {

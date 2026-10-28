@@ -2,6 +2,7 @@
 name: cleimesh-setup
 description: Put an AI agent's file work behind CleiMesh, so a prompt injection in an email or web page cannot read your keys or write where it wants, and every call leaves a signed receipt. Use when the user wants to run OpenClaw, Hermes Agent or Claude Code more safely, asks how to sandbox an agent's file access, how to limit what an agent can read or write, how to prove what an agent did (audits, GDPR, LGPD), or mentions CleiMesh. Also use after setup, when a CleiMesh tool refuses a call.
 license: MIT OR Apache-2.0
+homepage: https://github.com/cleitonaugusto/cleimesh
 ---
 
 # Set up CleiMesh for an agent

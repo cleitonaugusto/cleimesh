@@ -111,6 +111,8 @@ cleimesh doctor
 
 `--read` grants a directory, `--untrusted` grants one whose content taints the agent (mail, downloads), `--write` grants one that is refused once the agent is tainted. Run the same command again to renew the tokens (30 days by default, `--days`). Hermes needs its MCP support installed (`hermes setup`); without it Hermes saves the server disabled and `setup` stops before turning Hermes' own tools off. Details in [docs/usage.md](docs/usage.md#set-up-an-agent).
 
+Or let the agent walk you through it: `clawhub install cleimesh-setup` adds a [skill](skills/cleimesh-setup/SKILL.md) that helps you choose the folders, runs only the dry run and leaves the real command to you.
+
 By hand, or for any other agent that speaks MCP over stdio, use the same `mcp serve` command. Same node and token as above; use absolute paths.
 
 ```sh

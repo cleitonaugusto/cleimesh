@@ -190,6 +190,14 @@ async fn audit_suggest_proposes_what_the_agent_used_and_derive_takes_it() {
     assert!(!out.contains("clientes") && !out.contains("ana"), "only what was used shows: {out}");
     let written: Value = serde_json::from_str(&std::fs::read_to_string(&grants).unwrap()).unwrap();
     assert_eq!(written, json!({"file_read": {"read": [path(&docs)]}}));
+    // The node user cannot open the agent's 0600 token: the agent's user pipes it.
+    let piped = Command::new(env!("CARGO_BIN_EXE_cleimesh"))
+        .args(["audit", "suggest", "--token", "-", "--receipts", &path(&receipts), "--identity", &path(&node_key)])
+        .stdin(std::fs::File::open(&chain).unwrap())
+        .output()
+        .unwrap();
+    assert!(piped.status.success(), "{}", String::from_utf8_lossy(&piped.stderr));
+    assert!(String::from_utf8_lossy(&piped.stdout).contains(&format!("read: {} -> {}", path(&proj), path(&docs))));
 
     cleimesh(&["token", "derive", &path(&chain), &agent, "--tool", "file_read", "--grants", &path(&grants), "--identity", &path(&agent_key), "--output", &path(&narrower)]);
     let wider = std::fs::write(&grants, json!({"file_read": {"read": [path(&base)]}}).to_string());

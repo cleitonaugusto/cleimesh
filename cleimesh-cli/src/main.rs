@@ -373,7 +373,7 @@ enum AuditCommands {
     /// it never wrote, and tools never called dropped. Prints the
     /// `token derive` that would apply it; nothing changes until you run it
     Suggest {
-        /// The agent's chain file (its last token is the one to narrow)
+        /// The agent's chain file (its last token is the one to narrow); `-` reads it from standard input, for when the node user cannot open the file
         #[arg(long, value_name = "FILE")]
         token: PathBuf,
         /// First day, YYYY-MM-DD (UTC)
@@ -1151,7 +1151,7 @@ fn audit_suggest(
         return Err(anyhow::anyhow!("--format must be md or json").into());
     }
     let lang = Lang::parse(lang).ok_or_else(|| anyhow::anyhow!("--lang must be en or pt"))?;
-    let chain = read_chain(token)?;
+    let chain = read_chain_or_stdin(token)?;
     let leaf = chain.last().ok_or_else(|| anyhow::anyhow!("Chain {} is empty", token.display()))?;
     // Read unverified: the receipts, verified below, are what is trusted.
     let claims = aat::inspect(leaf).map_err(|e| anyhow::anyhow!("Cannot read the token: {}", e))?;
@@ -1313,7 +1313,22 @@ struct ChainFile {
 
 fn read_chain(path: &Path) -> Result<Vec<String>> {
     let json = std::fs::read_to_string(path).map_err(|e| anyhow::anyhow!("Cannot read chain {}: {}", path.display(), e))?;
-    let file: ChainFile = serde_json::from_str(&json).map_err(|e| anyhow::anyhow!("Invalid chain {}: {}", path.display(), e))?;
+    parse_chain(&json, &path.display().to_string())
+}
+
+/// `read_chain`, or the chain on standard input when `path` is `-`: the node
+/// user cannot open the agent's 0600 token, but the agent's user can pipe it.
+fn read_chain_or_stdin(path: &Path) -> Result<Vec<String>> {
+    if path != Path::new("-") {
+        return read_chain(path);
+    }
+    let mut json = String::new();
+    std::io::Read::read_to_string(&mut std::io::stdin(), &mut json).map_err(|e| anyhow::anyhow!("Cannot read chain from standard input: {}", e))?;
+    parse_chain(&json, "from standard input")
+}
+
+fn parse_chain(json: &str, name: &str) -> Result<Vec<String>> {
+    let file: ChainFile = serde_json::from_str(json).map_err(|e| anyhow::anyhow!("Invalid chain {}: {}", name, e))?;
     Ok(file.chain)
 }
 

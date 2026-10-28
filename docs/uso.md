@@ -38,6 +38,12 @@ cleimesh audit suggest --token chain.json -o permissao.json --lang pt
 cleimesh token derive chain.json <peer-id-do-agente> --tool file_read --grants permissao.json -o menor.json
 ```
 
+Quando o nó roda como outro usuário (`setup`, [separate-user.md](separate-user.md)), os recibos e a chave do nó são desse usuário e o token é seu (`0600`): passe-o pela entrada padrão com `--token -`.
+
+```sh
+(cd / && sudo -u cleimesh -H cleimesh audit suggest --token - --lang pt) < ~/.config/cleimesh/openclaw/write.json
+```
+
 ## Auditoria e retenção
 
 ```sh
@@ -100,10 +106,10 @@ cleimesh doctor
 # ok    node key     /home/voce/.config/cleimesh/identity.key (12D3KooW…)
 # ok    receipts     42 receipts in /home/voce/.local/share/cleimesh/receipts/receipts.jsonl verify
 # ok    sandbox      runs a builtin tool and refuses a file it was not granted
-# warn  OpenClaw     uses CleiMesh, but its own exec, process tool(s) are still on and bypass it; add them to "tools": {"deny": [...]} in ~/.openclaw/openclaw.json
+# FAIL  OpenClaw     uses CleiMesh, but its own exec, process tool(s) are still on and bypass it; add them to "tools": {"deny": [...]} in ~/.openclaw/openclaw.json
 ```
 
-Chaves (existem, `0600`), o log de recibos (verifica, tem cabeça assinada), o sandbox e cada agente com o CleiMesh registrado (Claude Code, OpenClaw, Hermes Agent): um agente que mantém as próprias ferramentas de arquivo ou shell faz o que o token recusa, sem recibo. Cada nó que os agentes chamam com `--node` é discado: falha se nada responder ou se responder outro nó (ele reiniciou com outra chave, e toda chamada falharia); a discagem não faz chamada, então não deixa recibo lá. O Claude Code é lido em todos os escopos (usuário, local e o `.mcp.json` do projeto). Quando os agentes chamam um nó que roda como outro usuário (`--node`), as chaves e o log do nó não são seus: confira-os com `sudo -u cleimesh cleimesh doctor`. Não altera nada; só sai com erro quando algo falha.
+Chaves (existem, `0600`), o log de recibos (verifica, tem cabeça assinada), o sandbox e cada agente com o CleiMesh registrado (Claude Code, OpenClaw, Hermes Agent): um agente que mantém as próprias ferramentas de arquivo ou shell faz o que o token recusa, sem recibo, e isso faz o `doctor` falhar (uma atualização ou mudança de configuração que as religue para um script ou CI que rode o `doctor`; o terminal e o navegador do Hermes com `--with-airlock` são a exceção). Cada nó que os agentes chamam com `--node` é discado: falha se nada responder ou se responder outro nó (ele reiniciou com outra chave, e toda chamada falharia); a discagem não faz chamada, então não deixa recibo lá. O Claude Code é lido em todos os escopos (usuário, local e o `.mcp.json` do projeto). Quando os agentes chamam um nó que roda como outro usuário (`--node`), as chaves e o log do nó não são seus: confira-os com `sudo -u cleimesh cleimesh doctor`. Não altera nada; só sai com erro quando algo falha.
 
 ## Escrevendo uma tool (ABI v1)
 

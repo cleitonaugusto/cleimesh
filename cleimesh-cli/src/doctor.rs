@@ -298,7 +298,9 @@ fn native_tools(what: &'static str, on: &[&str], fix: &str) -> Check {
     if on.is_empty() {
         check(Level::Ok, what, "uses CleiMesh, and its own file and shell tools are denied")
     } else {
-        check(Level::Warn, what, format!("uses CleiMesh, but its own {} tool(s) are still on and bypass it; {}", on.join(", "), fix))
+        // A fail, not a warning: an update or a config change that turns
+        // them back on must stop a script or CI that runs doctor.
+        check(Level::Fail, what, format!("uses CleiMesh, but its own {} tool(s) are still on and bypass it; {}", on.join(", "), fix))
     }
 }
 
@@ -354,13 +356,13 @@ mod tests {
             std::fs::write(hermes.join("config.yaml"), config).unwrap();
             super::hermes(dir.path()).unwrap().level
         };
-        assert_eq!(level(base), Level::Warn);
+        assert_eq!(level(base), Level::Fail);
         let with_airlock = format!("{base}plugins:\n  enabled: [airlock]\n");
-        assert_eq!(level(&with_airlock), Level::Warn, "airlock does not admit CleiMesh yet");
+        assert_eq!(level(&with_airlock), Level::Fail, "airlock does not admit CleiMesh yet");
         std::fs::write(hermes.join("airlock.yaml"), crate::setup::AIRLOCK_POLICY).unwrap();
         assert_eq!(level(&with_airlock), Level::Ok);
         let file_on = with_airlock.replace("[terminal, browser, web]", "[terminal, browser, file]");
-        assert_eq!(level(&file_on), Level::Warn, "airlock does not cover Hermes' file tools for us");
+        assert_eq!(level(&file_on), Level::Fail, "airlock does not cover Hermes' file tools for us");
     }
 
     #[test]

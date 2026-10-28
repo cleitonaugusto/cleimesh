@@ -80,9 +80,8 @@ Every line should be `ok`. It fails if the node does not answer, if the receipt 
 - **A path refused** (not granted): tell the user which folder you needed and why. Widening means running `setup` again with another flag.
 - **Narrow the token** to what was actually used, after some days of work:
   ```sh
-  # the token is 0600 and yours; lend the node user a copy
-  t=$(mktemp); cp ~/.config/cleimesh/<agent>/write.json "$t"; setfacl -m u:cleimesh:r "$t"
-  (cd / && sudo -u cleimesh -H cleimesh audit suggest --token "$t"); rm "$t"
+  # the token is 0600 and yours: pipe it in (cleimesh 0.1.5 or later)
+  (cd / && sudo -u cleimesh -H cleimesh audit suggest --token -) < ~/.config/cleimesh/<agent>/write.json
   ```
   It proposes the narrowest grants and prints the `token derive` that applies them; nothing changes until someone runs it.
 - **Prove what happened**: `(cd / && sudo -u cleimesh -H cleimesh audit verify)` checks the whole receipt log against the node's key.
@@ -91,7 +90,7 @@ Every line should be `ok`. It fails if the node does not answer, if the receipt 
 
 Be honest with the user about the limits:
 
-- It only covers calls that go through it. A native tool left on, or another MCP server, bypasses it; `doctor` warns about the ones it knows.
+- It only covers calls that go through it. A native tool left on, or another MCP server, bypasses it; `doctor` fails on the native tools it knows (so a script or CI running it catches an update that turns them back on).
 - No per-call human approval yet (the taint rule refuses instead of asking).
 - `setup` is Linux only, for OpenClaw and Hermes.
 

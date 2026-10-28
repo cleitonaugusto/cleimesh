@@ -38,6 +38,12 @@ cleimesh audit suggest --token chain.json -o grants.json
 cleimesh token derive chain.json <agent-peer-id> --tool file_read --grants grants.json -o narrower.json
 ```
 
+When the node runs as another user (`setup`, [separate-user.md](separate-user.md)), the receipts and the node key are that user's and the token is yours (`0600`): pipe it in with `--token -`.
+
+```sh
+(cd / && sudo -u cleimesh -H cleimesh audit suggest --token - -o /tmp/grants.json) < ~/.config/cleimesh/openclaw/write.json
+```
+
 ## Audit and retention
 
 ```sh
@@ -100,10 +106,10 @@ cleimesh doctor
 # ok    node key     /home/you/.config/cleimesh/identity.key (12D3KooW…)
 # ok    receipts     42 receipts in /home/you/.local/share/cleimesh/receipts/receipts.jsonl verify
 # ok    sandbox      runs a builtin tool and refuses a file it was not granted
-# warn  OpenClaw     uses CleiMesh, but its own exec, process tool(s) are still on and bypass it; add them to "tools": {"deny": [...]} in ~/.openclaw/openclaw.json
+# FAIL  OpenClaw     uses CleiMesh, but its own exec, process tool(s) are still on and bypass it; add them to "tools": {"deny": [...]} in ~/.openclaw/openclaw.json
 ```
 
-Keys (present, `0600`), the receipt log (verifies, has a signed head), the sandbox, and each agent with CleiMesh registered (Claude Code, OpenClaw, Hermes Agent): an agent that keeps its own file or shell tools can do what the token refuses, without a receipt. Each node the agents call with `--node` is dialed: it fails if nothing answers or if what answers is another node (it restarted with a new key, so every call would fail); the dial sends no call, so it leaves no receipt there. Claude Code is read in every scope (user, local and the project's `.mcp.json`). When your agents call a node run as another user (`--node`), the node's keys and log are not yours to have: check them with `sudo -u cleimesh cleimesh doctor`. Changes nothing; exits non-zero only on a failure.
+Keys (present, `0600`), the receipt log (verifies, has a signed head), the sandbox, and each agent with CleiMesh registered (Claude Code, OpenClaw, Hermes Agent): an agent that keeps its own file or shell tools can do what the token refuses, without a receipt, so that fails the run (an update or a config change that turns them back on stops a script or CI running `doctor`; Hermes' terminal and browser under `--with-airlock` are the exception). Each node the agents call with `--node` is dialed: it fails if nothing answers or if what answers is another node (it restarted with a new key, so every call would fail); the dial sends no call, so it leaves no receipt there. Claude Code is read in every scope (user, local and the project's `.mcp.json`). When your agents call a node run as another user (`--node`), the node's keys and log are not yours to have: check them with `sudo -u cleimesh cleimesh doctor`. Changes nothing; exits non-zero only on a failure.
 
 ## Writing a tool (ABI v1)
 

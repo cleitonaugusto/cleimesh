@@ -488,7 +488,7 @@ fn doctor(dir: &Path) -> std::process::Output {
 }
 
 #[test]
-fn doctor_warns_when_an_agent_keeps_its_own_tools() {
+fn doctor_fails_when_an_agent_keeps_its_own_tools() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path();
     let out = stdout(&doctor(home));
@@ -501,13 +501,15 @@ fn doctor_warns_when_an_agent_keeps_its_own_tools() {
     let claude = serde_json::json!({ "projects": { project.to_str().unwrap(): { "mcpServers": {
         "cleimesh": { "command": "cleimesh", "args": ["mcp", "serve", "--token", "chain.json"] } } } } });
     std::fs::write(home.join(".claude.json"), claude.to_string()).unwrap();
-    let out = stdout(&doctor(home));
-    assert!(out.contains("warn  Claude Code") && out.contains("Bash, Read, Write, Edit, NotebookEdit"), "{out}");
+    let failed = doctor(home);
+    assert!(!failed.status.success(), "native tools back on must fail the run, not just flag it");
+    let out = String::from_utf8_lossy(&failed.stdout).into_owned();
+    assert!(out.contains("FAIL  Claude Code") && out.contains("Bash, Read, Write, Edit, NotebookEdit"), "{out}");
 
     // Denied in the project settings; a narrower rule does not count.
     std::fs::write(project.join(".claude").join("settings.json"), r#"{"permissions":{"deny":["Bash(rm:*)","Read","Write","Edit","NotebookEdit"]}}"#).unwrap();
-    let out = stdout(&doctor(home));
-    assert!(out.contains("warn  Claude Code") && out.contains("own Bash tool(s)"), "{out}");
+    let out = String::from_utf8_lossy(&doctor(home).stdout).into_owned();
+    assert!(out.contains("FAIL  Claude Code") && out.contains("own Bash tool(s)"), "{out}");
     std::fs::write(project.join(".claude").join("settings.json"), r#"{"permissions":{"deny":["Bash","Read","Write","Edit","NotebookEdit"]}}"#).unwrap();
     assert!(stdout(&doctor(home)).contains("ok    Claude Code"));
 
@@ -519,8 +521,8 @@ fn doctor_warns_when_an_agent_keeps_its_own_tools() {
       tools: { profile: "minimal", deny: ["read", "write", "edit", "apply_patch", "exec", "process"] },
     }"#;
     std::fs::write(home.join(".openclaw").join("openclaw.json"), openclaw).unwrap();
-    let out = stdout(&doctor(home));
-    assert!(out.contains("warn  OpenClaw") && out.contains("own ls tool(s)"), "{out}");
+    let out = String::from_utf8_lossy(&doctor(home).stdout).into_owned();
+    assert!(out.contains("FAIL  OpenClaw") && out.contains("own ls tool(s)"), "{out}");
     std::fs::write(home.join(".openclaw").join("openclaw.json"), openclaw.replace(r#""process"]"#, r#""process", "ls"]"#)).unwrap();
     assert!(stdout(&doctor(home)).contains("ok    OpenClaw"));
 }
@@ -561,7 +563,7 @@ fn doctor_reads_project_scope_and_knows_a_remote_node() {
     std::fs::write(project.join(".mcp.json"), shared.to_string()).unwrap();
     let out = doctor(home);
     let text = String::from_utf8_lossy(&out.stdout);
-    assert!(text.contains("warn  Claude Code") && text.contains("own Bash, Read"), "{text}");
+    assert!(text.contains("FAIL  Claude Code") && text.contains("own Bash, Read"), "{text}");
     assert!(text.contains("ok    node key") && text.contains("sudo -u cleimesh cleimesh doctor"), "{text}");
     // No node behind that address.
     assert!(!out.status.success() && text.contains("FAIL  node"), "{text}");

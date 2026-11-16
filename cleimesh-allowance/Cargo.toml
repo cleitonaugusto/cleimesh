@@ -1,0 +1,14 @@
+[package]
+name = "cleimesh-allowance"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+description = "Give an agent a signed allowance — a bounded, provable budget enforced outside the agent, on any tool."
+repository = "https://github.com/cleitonaugusto/cleimesh"
+
+[dependencies]
+cleimesh-aat = { path = "../cleimesh-aat" }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+ed25519-dalek = "2.1"

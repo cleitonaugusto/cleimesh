@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "cleimesh-core",
     "cleimesh-aat",
+    "cleimesh-allowance",
     "cleimesh-receipt",
     "cleimesh-wasm-sandbox",
     "cleimesh-p2p",

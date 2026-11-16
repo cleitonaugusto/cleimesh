@@ -9,7 +9,8 @@
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23547249.svg)](https://doi.org/10.5281/zenodo.23547249)
 
-> **Signed permissions for AI agents that the sandbox actually enforces, and receipts anyone can replay to check.**
+> **Give your agent an allowance. Get a receipt.**
+> A bounded, provable budget — enforced outside the agent, on any tool.
 
 *[Leia em português](README.pt-BR.md)*
 
@@ -20,6 +21,32 @@
   <br>
   <b>Why it is built this way, the attacks it stops, and the mistakes made on the way.</b>
 </p>
+
+## Give your agent an allowance
+
+Your agent is stuck in a demo because you can't trust it with anything real: money, prod, a customer's data. Hand it a **signed allowance** — one tool, one recipient, up to an amount, for a number of calls — and it acts on its own inside the limit, while a prompt-injected or malicious agent can't widen it or lie about it, because the limit is enforced outside the agent, not asked of it.
+
+```sh
+cleimesh allowance grant --max '$5.00' --tool pay --to demo --calls 5 \
+  --owner owner.key --agent agent.key.pub.json --out allowance.json
+
+# put it in front of any MCP tool; the agent calls it as usual
+claude mcp add payer -- cleimesh mcp wrap --allowance allowance.json \
+  --owner owner.key.pub.json --agent agent.key -- demo-pay-server
+```
+
+```text
+  agent> pay demo $2.00     ->  ok. spent $2.00 of $5.00.
+  agent> pay demo $2.00     ->  ok. spent $4.00 of $5.00.
+  agent> pay demo $2.00     ->  refused: over the $5.00 allowance, $1.00 left.
+  agent> pay attacker $1.00 ->  refused: payee "attacker" is not in the allowance.
+```
+
+The agent acted on its own (power), never went over `$5.00` (control), and you get a signed, replayable receipt (trust) — the thing a reviewer needs before saying "ship it". See it now, no setup: `cargo run -p cleimesh-allowance --example wow`.
+
+---
+
+## How it works, in full
 
 AI agents (Claude Code, Cursor, LangGraph, CrewAI...) call third-party tools and hand work to other agents, almost always **with all of your permissions**. One malicious tool, or one prompt injection hidden in an email the agent read, can read `~/.ssh` and `.env`, delete files or leak data. Afterwards nobody can prove which agent did what, on whose behalf.
 

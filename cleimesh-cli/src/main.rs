@@ -4,13 +4,13 @@ use cleimesh_p2p::{aat, node_key, CleiMeshNode, P2PConfig};
 use cleimesh_observability::{ObservabilityConfig};
 use clap::{Parser, Subcommand};
 
+mod allowance;
 mod doctor;
 mod mcp;
 mod ocsf;
 mod setup;
 use std::time::Duration;
 use std::path::{Path, PathBuf};
-use std::env;
 
 #[derive(Parser)]
 #[command(name = "cleimesh")]
@@ -108,6 +108,10 @@ enum Commands {
     /// MCP: serve the node's tools to MCP clients (Claude Code, Cursor...), or put another MCP server behind a token
     #[command(subcommand)]
     Mcp(McpCommands),
+    /// Allowance: give an agent a signed, bounded, provable budget on any MCP
+    /// tool (how much, which tool, to whom, how many calls), enforced outside it
+    #[command(subcommand)]
+    Allowance(AllowanceCommands),
     /// Taint: agents that received untrusted content lose clean-only
     /// tools until a human clears them. Run with the node stopped
     #[command(subcommand)]
@@ -172,6 +176,48 @@ enum Commands {
 }
 
 #[derive(Subcommand)]
+enum AllowanceCommands {
+    /// Create an owner or agent key. The public half goes to <out>.pub.json.
+    Keygen {
+        #[arg(long, value_name = "FILE")]
+        out: PathBuf,
+    },
+    /// Show an allowance's limits and, on confirmation, sign and write it.
+    ///
+    /// Example: cleimesh allowance grant --max '$5.00' --tool pay --to demo --calls 5
+    ///          --owner owner.key --agent agent.key.pub.json --out allowance.json
+    Grant {
+        /// The total the agent may spend, e.g. '$5.00' or '5'.
+        #[arg(long)]
+        max: String,
+        /// The tool the agent may call.
+        #[arg(long)]
+        tool: String,
+        /// The only recipient the tool's `to` argument may name.
+        #[arg(long)]
+        to: String,
+        /// How many calls the allowance admits in total.
+        #[arg(long, default_value_t = 5)]
+        calls: u32,
+        /// How long the allowance lasts, in seconds.
+        #[arg(long, default_value_t = 3600)]
+        ttl: i64,
+        /// The owner's key (from `allowance keygen`); you sign with it.
+        #[arg(long, value_name = "FILE")]
+        owner: PathBuf,
+        /// The agent's public JWK (<key>.pub.json): who the allowance is for.
+        #[arg(long, value_name = "FILE")]
+        agent: PathBuf,
+        /// Where to write the signed allowance.
+        #[arg(long, value_name = "FILE")]
+        out: PathBuf,
+        /// The owner's URI, recorded as the token issuer.
+        #[arg(long, default_value = "urn:cleimesh:owner")]
+        iss: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum McpCommands {
     /// MCP server over stdio. Every tools/call presents the token chain
     /// with a fresh proof of possession and runs under its grants, with
@@ -221,6 +267,19 @@ enum McpCommands {
         /// Receipt log (default: ~/.local/share/cleimesh/receipts/receipts.jsonl)
         #[arg(long, value_name = "FILE")]
         receipts: Option<PathBuf>,
+        /// Enforce a signed allowance (from `allowance grant`) instead of a node
+        /// token chain. With this, pass --owner and --agent, not --token.
+        #[arg(long, value_name = "FILE")]
+        allowance: Option<PathBuf>,
+        /// With --allowance: the owner's public JWK, the only key trusted.
+        #[arg(long, value_name = "FILE")]
+        owner: Option<PathBuf>,
+        /// With --allowance: the agent's key, the allowance holder.
+        #[arg(long, value_name = "FILE")]
+        agent: Option<PathBuf>,
+        /// With --allowance: spend ledger across restarts (calls, amount spent).
+        #[arg(long, value_name = "FILE")]
+        ledger: Option<PathBuf>,
         /// The MCP server's command and its arguments, after `--`
         #[arg(last = true, required = true, value_name = "COMMAND")]
         command: Vec<String>,
@@ -599,7 +658,22 @@ async fn run(cli: Cli) -> Result<()> {
             }
         }
         Commands::Mcp(McpCommands::Serve { token, holder, node, identity, receipts }) => mcp_serve(token, holder, node, identity, receipts).await?,
-        Commands::Mcp(McpCommands::Wrap { token, holder, identity, receipts, command }) => mcp_wrap(token, holder, identity, receipts, command).await?,
+        Commands::Mcp(McpCommands::Wrap { token, holder, identity, receipts, allowance, owner, agent, ledger, command }) => {
+            match allowance {
+                Some(allowance) => {
+                    let owner = owner.ok_or_else(|| cleimesh_core::CleiMeshError::Internal(anyhow::anyhow!("--allowance needs --owner <owner.key.pub.json>")))?;
+                    let agent = agent.ok_or_else(|| cleimesh_core::CleiMeshError::Internal(anyhow::anyhow!("--allowance needs --agent <agent.key>")))?;
+                    allowance::wrap(allowance, agent, owner, ledger, receipts, command).await?
+                }
+                None => mcp_wrap(token, holder, identity, receipts, command).await?,
+            }
+        }
+        Commands::Allowance(cmd) => match cmd {
+            AllowanceCommands::Keygen { out } => allowance::keygen(&out)?,
+            AllowanceCommands::Grant { max, tool, to, calls, ttl, owner, agent, out, iss } => {
+                allowance::grant(max, tool, to, calls, ttl, owner, agent, out, iss)?
+            }
+        },
         Commands::Taint(cmd) => taint(cmd)?,
         Commands::Audit(cmd) => match cmd {
             AuditCommands::Verify { receipts, identity, head } => audit_verify(receipts, identity, head)?,

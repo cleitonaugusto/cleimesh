@@ -14,7 +14,10 @@ cleimesh-core = { path = "../cleimesh-core" }
 cleimesh-wasm-sandbox = { path = "../cleimesh-wasm-sandbox" }
 cleimesh-p2p = { path = "../cleimesh-p2p" }
 cleimesh-receipt = { path = "../cleimesh-receipt" }
+cleimesh-allowance = { path = "../cleimesh-allowance" }
 cleimesh-observability = { path = "../cleimesh-observability" }
+cleimesh-aat = { path = "../cleimesh-aat" }
+sha2 = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

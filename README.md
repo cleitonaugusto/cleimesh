@@ -42,7 +42,7 @@ claude mcp add payer -- cleimesh mcp wrap --allowance allowance.json \
   agent> pay attacker $1.00 ->  refused: payee "attacker" is not in the allowance.
 ```
 
-The agent acted on its own (power), never went over `$5.00` (control), and you get a signed, replayable receipt (trust) — the thing a reviewer needs before saying "ship it". See it now, no setup: `cargo run -p cleimesh-allowance --example wow`.
+The agent acted on its own (power), never went over `$5.00` (control), and every call — allowed or refused — leaves a receipt (trust): a reviewer sees exactly what it did before saying "ship it". (This wedge writes an append-only receipt log; for receipts that are signed, hash-chained and replayable byte for byte, route the tool through the node path below.) See it now, no setup: `cargo run -p cleimesh-allowance --example wow`.
 
 ---
 

@@ -4,6 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use url::Url;
 
 /// Deepest `all`/`any` nesting accepted (draft recommends 32).
 pub const MAX_CONSTRAINT_DEPTH: usize = 32;
@@ -24,6 +25,13 @@ pub enum Constraint {
     },
     OneOf { values: Vec<Value> },
     NotOneOf { excluded: Vec<Value> },
+    /// The value is a URL string whose host is one of `hosts` (exact host,
+    /// case-insensitive, port ignored). An egress allowlist: a tool argument
+    /// that carries a URL — a fetch target, a webhook, a redirect — may only
+    /// reach a named host, so a prompt-injected agent cannot exfiltrate to its
+    /// own domain. Parsed with a real URL parser, so `https://ok.test@evil.test/`
+    /// has host `evil.test`, not `ok.test`. Empty `hosts` admits nothing.
+    HostIn { hosts: Vec<String> },
     Contains { required: Vec<Value> },
     Subset { allowed: Vec<Value> },
     Wildcard,
@@ -50,6 +58,21 @@ fn member(values: &[Value], v: &Value) -> bool {
 
 fn all_members(of: &[Value], values: &[Value]) -> bool {
     values.iter().all(|v| member(of, v))
+}
+
+/// The value is a URL string whose host is in `hosts` (exact, case-insensitive).
+/// A real parser decides the host, so userinfo (`host@`) can't disguise it.
+fn host_allowed(v: &Value, hosts: &[String]) -> bool {
+    let Some(s) = v.as_str() else { return false };
+    let Ok(url) = Url::parse(s) else { return false };
+    let Some(host) = url.host_str() else { return false };
+    hosts.iter().any(|h| h.eq_ignore_ascii_case(host))
+}
+
+/// Every host in `child` is in `parent` (case-insensitive): the child allowlist
+/// is a subset, so it can only narrow.
+fn host_subset(child: &[String], parent: &[String]) -> bool {
+    child.iter().all(|h| parent.iter().any(|p| p.eq_ignore_ascii_case(h)))
 }
 
 impl Constraint {
@@ -91,6 +114,7 @@ impl Constraint {
             }
             Constraint::OneOf { values } => member(values, v),
             Constraint::NotOneOf { excluded } => !member(excluded, v),
+            Constraint::HostIn { hosts } => host_allowed(v, hosts),
             Constraint::Contains { required } => v.as_array().is_some_and(|a| all_members(a, required)),
             Constraint::Subset { allowed } => v.as_array().is_some_and(|a| all_members(allowed, a)),
             Constraint::Wildcard => true,
@@ -110,6 +134,8 @@ impl Constraint {
             (Exact { value }, Exact { value: p }) => same(value, p),
             (Exact { value }, Range { .. }) => value.is_number() && parent.check(value),
             (Exact { value }, OneOf { values }) => member(values, value),
+            // A single exact URL narrows a host allowlist, if its host is allowed.
+            (Exact { value }, HostIn { hosts }) => host_allowed(value, hosts),
             (Exact { .. }, _) => false,
             (Range { min, max, min_inclusive, max_inclusive }, Range { min: pmin, max: pmax, min_inclusive: pmin_inc, max_inclusive: pmax_inc }) => {
                 bound_ok(*min, *min_inclusive, *pmin, *pmin_inc, |a, b| a > b)
@@ -117,6 +143,7 @@ impl Constraint {
             }
             (OneOf { values }, OneOf { values: p }) => all_members(p, values),
             (NotOneOf { excluded }, NotOneOf { excluded: p }) => all_members(excluded, p),
+            (HostIn { hosts }, HostIn { hosts: p }) => host_subset(hosts, p),
             (Contains { required }, Contains { required: p }) => all_members(required, p),
             (Subset { allowed }, Subset { allowed: p }) => all_members(p, allowed),
             (All { constraints }, All { constraints: p }) => match_all(p, constraints, &mut vec![false; constraints.len()], 0),
@@ -168,4 +195,66 @@ fn match_all(parents: &[Constraint], derived: &[Constraint], used: &mut Vec<bool
         }
     }
     false
+}
+
+#[cfg(test)]
+mod host_in_tests {
+    use super::Constraint;
+    use serde_json::json;
+
+    fn host_in(hosts: &[&str]) -> Constraint {
+        Constraint::HostIn { hosts: hosts.iter().map(|s| s.to_string()).collect() }
+    }
+
+    #[test]
+    fn admits_only_the_listed_host() {
+        let c = host_in(&["api.stripe.com"]);
+        assert!(c.check(&json!("https://api.stripe.com/v1/charges")));
+        assert!(c.check(&json!("https://API.Stripe.com/x"))); // case-insensitive
+        assert!(c.check(&json!("https://api.stripe.com:8443/x"))); // port ignored
+        assert!(!c.check(&json!("https://evil.example/collect")));
+        assert!(!c.check(&json!("https://apistripe.com/x"))); // not a substring match
+    }
+
+    #[test]
+    fn userinfo_cannot_disguise_the_host() {
+        // The real host is evil.example; api.stripe.com is only userinfo.
+        assert!(!host_in(&["api.stripe.com"]).check(&json!("https://api.stripe.com@evil.example/collect")));
+    }
+
+    #[test]
+    fn non_url_and_non_string_are_refused() {
+        let c = host_in(&["api.stripe.com"]);
+        assert!(!c.check(&json!("not a url")));
+        assert!(!c.check(&json!("/charges"))); // relative, no host
+        assert!(!c.check(&json!(42)));
+        assert!(!c.check(&json!({ "url": "https://api.stripe.com" })));
+    }
+
+    #[test]
+    fn empty_allowlist_admits_nothing() {
+        assert!(!host_in(&[]).check(&json!("https://api.stripe.com/x")));
+    }
+
+    #[test]
+    fn a_child_allowlist_may_only_be_a_subset() {
+        let parent = host_in(&["api.stripe.com", "api.github.com"]);
+        assert!(host_in(&["api.stripe.com"]).subsumes(&parent)); // narrower
+        assert!(host_in(&["api.stripe.com", "api.github.com"]).subsumes(&parent)); // equal
+        assert!(!host_in(&["evil.example"]).subsumes(&parent)); // outside
+        assert!(!host_in(&["api.stripe.com", "evil.example"]).subsumes(&parent)); // adds a host
+    }
+
+    #[test]
+    fn an_exact_url_narrows_a_host_allowlist() {
+        let parent = host_in(&["api.stripe.com"]);
+        assert!(Constraint::exact("https://api.stripe.com/v1/charges").subsumes(&parent));
+        assert!(!Constraint::exact("https://evil.example/x").subsumes(&parent));
+    }
+
+    #[test]
+    fn host_in_narrows_wildcard_but_not_the_reverse() {
+        assert!(host_in(&["api.stripe.com"]).subsumes(&Constraint::Wildcard));
+        assert!(!Constraint::Wildcard.subsumes(&host_in(&["api.stripe.com"])));
+    }
 }

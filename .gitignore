@@ -16,3 +16,4 @@ wasm-tools/builtins/target
 .idea
 # Local node data (sled databases created by runs and tests)
 *-data/
+graphify-out/

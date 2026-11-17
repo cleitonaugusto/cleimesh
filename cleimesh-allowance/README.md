@@ -62,7 +62,7 @@ assert!(admit("pay", &args, &p, &owner_jwk, now, &mut ledger).is_ok());
 
 ## Status
 
-The engine here is complete and tested. A one-command CLI (`cleimesh allowance`, `cleimesh mcp wrap --allowance`) that drops this in front of any MCP tool is being wired up next; the `wow` example shows the exact experience today.
+The engine here is complete and tested. The CLI is in place: `cleimesh allowance keygen` and `cleimesh allowance grant` sign an allowance, and `cleimesh mcp wrap --allowance` drops it in front of any MCP tool (each call checked against the allowance, every call recorded to an append-only log). The `wow` example shows the flow end to end.
 
 ## License
 

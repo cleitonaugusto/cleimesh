@@ -3,6 +3,12 @@
 //! a demo tool and every amount is a number. Run it:
 //!
 //!   cargo run -p cleimesh-allowance --example wow
+//!
+//! The headlines are all one failure: an agent that did more than it was told —
+//! paid the wrong payee or too much, sent the email, changed the booking — and
+//! no one could prove the limit or catch it. The control is the same for any
+//! tool an agent calls on its own: the limit lives outside the agent, and every
+//! call leaves a record. "pay" here stands in for any such tool.
 
 use cleimesh_aat::{pop, Jwk, Presentation, SigningKey};
 use cleimesh_allowance::{admit, issue, Envelope, Ledger, Refusal};
@@ -12,6 +18,9 @@ const NOW: i64 = 1_800_000_000;
 const CAP: f64 = 5.00;
 
 fn main() {
+    println!("An agent acting on its own: a payment, an email, a booking change.");
+    println!("The limit lives outside it, and every call leaves a record. Here, money:\n");
+
     // You (owner) and the agent you are handing an allowance to.
     let owner = SigningKey::from_bytes(&[1u8; 32]);
     let agent = SigningKey::from_bytes(&[2u8; 32]);
@@ -19,7 +28,7 @@ fn main() {
 
     let env = Envelope::new(Jwk::from_key(&agent.verifying_key()), "pay", "demo", CAP, 5, 3600);
 
-    println!("$ cleimesh allowance --max '${CAP:.2}' --tool pay --to demo --calls 5\n");
+    println!("$ cleimesh allowance grant --max '${CAP:.2}' --tool pay --to demo --calls 5\n");
     println!("  You are signing an allowance. The agent may, on its own:");
     for line in env.card() {
         println!("    {line}");
@@ -28,7 +37,7 @@ fn main() {
 
     let token = issue(&owner, "urn:owner:you", &env, NOW).expect("the owner signs the allowance");
 
-    println!("$ cleimesh mcp wrap --allowance allowance.json -- demo-pay-server");
+    println!("$ cleimesh mcp wrap --allowance allowance.json --owner owner.pub.json --agent agent.key -- demo-pay-server");
     println!("  the agent now acts on its own; cleimesh enforces the allowance from outside it.\n");
 
     let mut ledger = Ledger::new();
@@ -62,8 +71,8 @@ fn main() {
     pay("demo", 0.50); // fits in the remaining $0.50
 
     let (calls, spent) = ledger.usage(&jti);
-    println!("\n$ cleimesh receipts");
-    println!("  {calls} payments, ${spent:.2} total, to demo.");
-    println!("  every call signed and replayable. tamper check: OK.");
-    println!("  the agent acted on its own, never went over ${CAP:.2}, and here is the proof.");
+    println!("\n$ cat receipts.jsonl   # the append-only log cleimesh wrote beside the wrap");
+    println!("  {calls} payments admitted, ${spent:.2} total, to demo.");
+    println!("  every call recorded: tool, argument hash, and outcome (admitted or which limit refused it).");
+    println!("  the agent acted on its own, never went over ${CAP:.2}, and left a record of every attempt.");
 }

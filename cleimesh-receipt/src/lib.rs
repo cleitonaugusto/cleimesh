@@ -13,8 +13,13 @@
 
 mod head;
 mod prune;
+mod translog;
 pub use head::{check_head, head_path, Head, HeadStatus};
 pub use prune::{prune, PruneSummary, PRUNE_ACTION_ID};
+pub use translog::{
+    consistency_proof, inclusion_proof, leaf_hash, leaves_from_log, merkle_root, prove,
+    verify_consistency, verify_inclusion, InclusionBundle, SignedTreeHead,
+};
 
 use std::collections::HashSet;
 use std::fs::{File, OpenOptions};

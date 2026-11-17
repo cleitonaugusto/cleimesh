@@ -356,6 +356,38 @@ enum AuditCommands {
         #[arg(long, value_name = "FILE")]
         receipts: Option<PathBuf>,
     },
+    /// Print a signed tree head: an RFC 6962 Merkle commitment over the whole
+    /// log, signed by the node. A third party then checks one receipt against
+    /// it without the rest of the log (`audit prove`, `audit verify-inclusion`)
+    Sth {
+        /// Receipt log (default: ~/.local/share/cleimesh/receipts/receipts.jsonl)
+        #[arg(long, value_name = "FILE")]
+        receipts: Option<PathBuf>,
+        /// Node key that signs it (default: ~/.config/cleimesh/identity.key)
+        #[arg(long)]
+        identity: Option<PathBuf>,
+    },
+    /// Print a self-contained inclusion bundle (JSON) proving the receipt at
+    /// INDEX is in the log, under a signed tree head. Hand it to an auditor
+    Prove {
+        /// Zero-based index of the receipt in the log (see `audit tail`)
+        index: usize,
+        /// Receipt log (default: ~/.local/share/cleimesh/receipts/receipts.jsonl)
+        #[arg(long, value_name = "FILE")]
+        receipts: Option<PathBuf>,
+        /// Node key that signs the head (default: ~/.config/cleimesh/identity.key)
+        #[arg(long)]
+        identity: Option<PathBuf>,
+    },
+    /// Verify an inclusion bundle from `audit prove`: confirms the receipt is
+    /// in the signed log, from the bundle alone and the node's public key
+    VerifyInclusion {
+        /// Bundle JSON from `audit prove` (`-` for standard input)
+        bundle: PathBuf,
+        /// Node key to trust as the head's signer (default: ~/.config/cleimesh/identity.key)
+        #[arg(long)]
+        identity: Option<PathBuf>,
+    },
     /// Remove receipts older than a date (retention), leaving a receipt of
     /// the removal. Run it with the node stopped
     Prune {
@@ -678,6 +710,9 @@ async fn run(cli: Cli) -> Result<()> {
         Commands::Audit(cmd) => match cmd {
             AuditCommands::Verify { receipts, identity, head } => audit_verify(receipts, identity, head)?,
             AuditCommands::Head { receipts } => audit_head(receipts)?,
+            AuditCommands::Sth { receipts, identity } => audit_sth(receipts, identity)?,
+            AuditCommands::Prove { index, receipts, identity } => audit_prove(index, receipts, identity)?,
+            AuditCommands::VerifyInclusion { bundle, identity } => audit_verify_inclusion(bundle, identity)?,
             AuditCommands::Replay { step, args, wasm, receipts, identity } => audit_replay(&step, args, wasm, receipts, identity).await?,
             AuditCommands::Prune { antes, dry_run, receipts, identity } => audit_prune(&antes, dry_run, receipts, identity)?,
             AuditCommands::Tail { lines, receipts, json } => audit_tail(lines, receipts, json)?,
@@ -1057,6 +1092,42 @@ async fn mcp_wrap(tokens: Vec<PathBuf>, holder: Option<PathBuf>, identity: Optio
         .await
         .map_err(|e| anyhow::anyhow!("MCP server failed to start: {}", e))?;
     service.waiting().await.map_err(|e| anyhow::anyhow!("MCP server stopped: {}", e))?;
+    Ok(())
+}
+
+fn audit_sth(receipts: Option<PathBuf>, identity: Option<PathBuf>) -> Result<()> {
+    let path = receipts_path(receipts)?;
+    let log = std::fs::read(&path).map_err(|e| anyhow::anyhow!("Cannot read {}: {}", path.display(), e))?;
+    let keypair = node_key::load_or_generate(&identity_key_path(identity, node_key::NODE_KEY_FILE)?)?;
+    let key = node_key::aat_signing_key(&keypair)?;
+    let sth = cleimesh_receipt::SignedTreeHead::sign(&key, &cleimesh_receipt::leaves_from_log(&log));
+    println!("{}", serde_json::to_string_pretty(&sth).map_err(|e| anyhow::anyhow!("{e}"))?);
+    Ok(())
+}
+
+fn audit_prove(index: usize, receipts: Option<PathBuf>, identity: Option<PathBuf>) -> Result<()> {
+    let path = receipts_path(receipts)?;
+    let log = std::fs::read(&path).map_err(|e| anyhow::anyhow!("Cannot read {}: {}", path.display(), e))?;
+    let keypair = node_key::load_or_generate(&identity_key_path(identity, node_key::NODE_KEY_FILE)?)?;
+    let key = node_key::aat_signing_key(&keypair)?;
+    let bundle = cleimesh_receipt::prove(&log, &key, index).map_err(|e| anyhow::anyhow!("{e}"))?;
+    println!("{}", serde_json::to_string_pretty(&bundle).map_err(|e| anyhow::anyhow!("{e}"))?);
+    Ok(())
+}
+
+fn audit_verify_inclusion(bundle: PathBuf, identity: Option<PathBuf>) -> Result<()> {
+    let data = if bundle.to_str() == Some("-") {
+        let mut s = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut s).map_err(|e| anyhow::anyhow!("Cannot read bundle from standard input: {}", e))?;
+        s
+    } else {
+        std::fs::read_to_string(&bundle).map_err(|e| anyhow::anyhow!("Cannot read {}: {}", bundle.display(), e))?
+    };
+    let bundle: cleimesh_receipt::InclusionBundle = serde_json::from_str(&data).map_err(|e| anyhow::anyhow!("Invalid bundle: {}", e))?;
+    let keypair = node_key::load_or_generate(&identity_key_path(identity, node_key::NODE_KEY_FILE)?)?;
+    let anchor = node_key::aat_signing_key(&keypair)?.verifying_key();
+    bundle.verify(&anchor).map_err(|e| anyhow::anyhow!("{e}"))?;
+    println!("OK: receipt {} of {} is in the log, under a head signed by {}", bundle.index, bundle.tree_size, bundle.sth.public_key);
     Ok(())
 }
 

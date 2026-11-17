@@ -65,6 +65,8 @@ Most tools in this space check permissions **at the door** (a proxy or gateway) 
 
 On top: tokens that shrink to what the agent actually used (`audit suggest`), and privacy reports per data subject and per agent (GDPR, Brazil's LGPD), in English or Portuguese.
 
+**Interoperable, not inspired-by.** The receipts reproduce the published Appendix&nbsp;A test vectors of [draft-sahu-agent-action-receipts](https://datatracker.ietf.org/doc/draft-sahu-agent-action-receipts/) byte for byte — canonical form, SHA‑256 and Ed25519 signatures — and the token profile passes the RFC&nbsp;8037 EdDSA vectors. The transparency log over the receipts (`audit sth` / `prove` / `verify-inclusion`) uses RFC&nbsp;6962 Merkle hashing (as Certificate Transparency and Sigstore do), so a third party can verify one receipt is in the signed log, and that the log only ever appended, without the whole log and without trusting the agent. Measured numbers (a receipt in a million-entry log proven with a 640-byte proof in ~13 µs) and the vector conformance are in [BENCHMARKS.md](BENCHMARKS.md).
+
 ### Where it fits
 
 <picture>

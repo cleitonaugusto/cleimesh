@@ -20,6 +20,20 @@ ignore = [
     { id = "RUSTSEC-2026-0391", reason = "zstd, via wasmtime's compilation cache (never enabled)" },
     { id = "RUSTSEC-2026-0398", reason = "zstd-safe, via wasmtime's compilation cache (never enabled)" },
     { id = "RUSTSEC-2026-0403", reason = "zstd-safe, via wasmtime's compilation cache (never enabled)" },
+    # wasmtime (48.0.9), rmcp (3.11.0) and libp2p-gossipsub (0.50.1) are bumped
+    # to clear their own advisories. The rest live outside the enforcement path:
+    # zip only extracts utoipa-swagger-ui's own bundled UI at build time (never an
+    # attacker archive), in the frozen HTTP API crate; webpki-roots ships with the
+    # Prometheus metrics exporter; humantime is a transitive time-string parser.
+    { id = "RUSTSEC-2026-0367", reason = "zip SUID bits, build-time swagger-ui asset extraction via utoipa-swagger-ui (frozen HTTP API); no attacker archives" },
+    { id = "RUSTSEC-2026-0368", reason = "zip symlink traversal, same build-time swagger-ui path (frozen HTTP API)" },
+    { id = "RUSTSEC-2026-0369", reason = "zip symlink permissions, same build-time swagger-ui path (frozen HTTP API)" },
+    { id = "RUSTSEC-2026-0429", reason = "zip abort on crafted symlink size, same build-time swagger-ui path (frozen HTTP API)" },
+    { id = "RUSTSEC-2026-0543", reason = "zip AES auth-code check, same build-time swagger-ui path (frozen HTTP API)" },
+    { id = "RUSTSEC-2026-0545", reason = "zip, same build-time swagger-ui path (frozen HTTP API)" },
+    { id = "RUSTSEC-2026-0548", reason = "zip local-header name mismatch, same build-time swagger-ui path (frozen HTTP API)" },
+    { id = "RUSTSEC-2026-0381", reason = "webpki-roots emSign bundle, via hyper-rustls in the Prometheus metrics exporter (observability only); not the enforcement/receipt path" },
+    { id = "RUSTSEC-2026-0542", reason = "humantime, transitive time-string parser; not in the enforcement path" },
 ]
 
 [licenses]

@@ -125,6 +125,13 @@ granted directory, file names never. Tests: `cleimesh-p2p/tests/report.rs`,
   token granting such a tool directories or network is refused, since
   those grants could not be enforced. The wrapper also keeps the node key
   in its own process, so run it as a user the agent is not.
+- **Where a tool's connection ends up.** `host_in` checks the URL the
+  agent asks for, not the connection the tool makes. A redirect to another
+  host, DNS rebinding (an allowed name that resolves to an internal address
+  on a later lookup), or a server that ignores its argument all get past
+  it. Userinfo tricks and odd IP spellings do not: the URL is parsed, not
+  string-matched. Enforcing at the connection needs host-mediated HTTP in
+  the sandbox (S19); a native server behind `mcp wrap` is out of reach.
 - **Content that reaches the agent another way.** Taint means "the node
   returned output of a `taints` tool to this chain". The prompt itself, or
   another tool outside the node, doesn't taint anything.
@@ -173,6 +180,7 @@ granted directory, file names never. Tests: `cleimesh-p2p/tests/report.rs`,
 | Native implementations of the built-in tools still exist in `tools.rs` (unused by the node) | someone embedding the library could run a tool outside the sandbox by mistake | S14 |
 | No central redaction of secrets in logs and errors | a secret printed by a tool could reach a log | S15 |
 | WASI preview2 has no per-call grants | refused rather than run with the wrong grants | R6 |
+| `host_in` is checked on the argument, not on the connection | a redirect or DNS rebinding can take a tool past the egress allowlist | S19 |
 | No independent security review yet | | S13 |
 
 ## Reporting

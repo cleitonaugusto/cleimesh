@@ -32,8 +32,8 @@ fn bench_verify(c: &mut Criterion) {
     let mut group = c.benchmark_group("aat_verify");
     for depth in [0u32, 2, 7, 15] {
         let (anchor, presentation, args) = chain(depth);
-        let anchors = [anchor];
-        let policy = Policy { trust_anchors: &anchors, audience: Some("node"), now: NOW };
+        let anchors = [TrustAnchor::new("urn:bench", anchor)];
+        let policy = Policy::for_audience(&anchors, "node", NOW);
         verify(&presentation, &policy, "echo", &args).expect("bench chain verifies");
         // Chain length = delegations + the root.
         group.bench_with_input(BenchmarkId::new("chain_length", depth + 1), &presentation, |b, p| {

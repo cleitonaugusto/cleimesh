@@ -222,8 +222,8 @@ pub fn admit(
     now: i64,
     ledger: &mut Ledger,
 ) -> Result<Admitted, Refusal> {
-    let anchors = [owner.clone()];
-    let policy = Policy { trust_anchors: &anchors, audience: None, now };
+    let anchors = [aat::TrustAnchor::key_only(owner.clone())];
+    let policy = Policy::new(&anchors, now);
     let verified = aat::verify(presentation, &policy, tool, args).map_err(|e| Refusal::NotAllowed(e.0))?;
 
     let entry = read_entry(&verified.root)?;

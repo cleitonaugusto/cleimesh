@@ -1,6 +1,6 @@
 [package]
 name = "cleimesh-aat"
-description = "Attenuating Agent Tokens (draft-niyikiza-oauth-attenuating-agent-tokens-01), JWT/JWS profile"
+description = "Attenuating Agent Tokens (draft-niyikiza-oauth-attenuating-agent-tokens-02), JWT/JWS profile"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
@@ -8,7 +8,7 @@ authors = { workspace = true }
 
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["raw_value"] }
 thiserror = { workspace = true }
 uuid = { workspace = true, features = ["v7"] }
 ed25519-dalek = { version = "2.1", features = ["rand_core"] }

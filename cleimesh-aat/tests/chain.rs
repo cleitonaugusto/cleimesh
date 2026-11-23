@@ -25,7 +25,7 @@ fn tools(v: Value) -> Tools {
 /// Signs arbitrary claims, bypassing the checks of `derive`: how an attacker
 /// would build a token.
 fn sign_raw(key: &SigningKey, claims: &Value) -> String {
-    let input = format!("{}.{}", URL_SAFE_NO_PAD.encode(br#"{"alg":"EdDSA"}"#), URL_SAFE_NO_PAD.encode(claims.to_string()));
+    let input = format!("{}.{}", URL_SAFE_NO_PAD.encode(br#"{"alg":"Ed25519","typ":"aat+jwt"}"#), URL_SAFE_NO_PAD.encode(claims.to_string()));
     format!("{}.{}", input, URL_SAFE_NO_PAD.encode(key.sign(input.as_bytes()).to_bytes()))
 }
 
@@ -59,8 +59,8 @@ fn present(chain: &Chain, tool: &str, args: &Value, aud: Option<&str>) -> Presen
 }
 
 fn check(chain: &Chain, p: &Presentation, tool: &str, args: &Value) -> Result<Verified> {
-    let anchors = [jwk(&chain.a)];
-    verify(p, &Policy { trust_anchors: &anchors, audience: Some("node-A"), now: NOW }, tool, args)
+    let anchors = [TrustAnchor::new(NODE, jwk(&chain.a))];
+    verify(p, &Policy::for_audience(&anchors, "node-A", NOW), tool, args)
 }
 
 fn denied(r: Result<Verified>, why: &str) {
@@ -124,8 +124,8 @@ fn widening_link_is_refused() {
     }));
     let args = json!({"a": 50});
     let p = Presentation { chain: vec![root, child.clone()], pop: pop(&c, &child, "add", &args, None, NOW).unwrap() };
-    let anchors = [jwk(&a)];
-    denied(verify(&p, &Policy { trust_anchors: &anchors, audience: None, now: NOW }, "add", &args), "widened");
+    let anchors = [TrustAnchor::new(NODE, jwk(&a))];
+    denied(verify(&p, &Policy::new(&anchors, NOW), "add", &args), "widened");
 }
 
 #[test]
@@ -137,8 +137,8 @@ fn child_bound_to_another_parent_is_refused() {
     let child = derive(&root1, &b, &jwk(&c), grant, NOW, 60, None).unwrap();
     let args = json!({});
     let p = Presentation { chain: vec![root2, child.clone()], pop: pop(&c, &child, "add", &args, None, NOW).unwrap() };
-    let anchors = [jwk(&a)];
-    denied(verify(&p, &Policy { trust_anchors: &anchors, audience: None, now: NOW }, "add", &args), "par_hash");
+    let anchors = [TrustAnchor::new(NODE, jwk(&a))];
+    denied(verify(&p, &Policy::new(&anchors, NOW), "add", &args), "par_hash");
 }
 
 #[test]
@@ -167,7 +167,7 @@ fn proof_of_possession_binds_holder_call_and_audience() {
     let p = Presentation { chain: vec![ch.root.clone(), ch.child.clone()], pop: pop(&key(), &ch.child, "echo", &args, Some("node-A"), NOW).unwrap() };
     denied(check(&ch, &p, "echo", &args), "bad signature");
     denied(check(&ch, &present(&ch, "echo", &args, Some("node-B")), "echo", &args), "audience");
-    denied(check(&ch, &present(&ch, "echo", &args, None), "echo", &args), "audience");
+    denied(check(&ch, &present(&ch, "echo", &args, None), "echo", &args), "no aat_aud");
     // A proof made for other arguments than the ones executed.
     let p = present(&ch, "echo", &args, Some("node-A"));
     let other = json!({"message": "hello", "extra": true});
@@ -182,8 +182,8 @@ fn arguments_compare_canonically() {
     let (a, b) = (key(), key());
     let root = issue_root(&a, NODE, &jwk(&b), tools(json!({"add": {"n": {"constraint_type": "exact", "value": 1}}})), NOW, 3600, 0).unwrap();
     let p = Presentation { chain: vec![root.clone()], pop: pop(&b, &root, "add", &json!({"n": 1.0}), None, NOW).unwrap() };
-    let anchors = [jwk(&a)];
-    verify(&p, &Policy { trust_anchors: &anchors, audience: None, now: NOW }, "add", &json!({"n": 1})).unwrap();
+    let anchors = [TrustAnchor::new(NODE, jwk(&a))];
+    verify(&p, &Policy::new(&anchors, NOW), "add", &json!({"n": 1})).unwrap();
 }
 
 #[test]
@@ -203,10 +203,10 @@ fn time_bounds_hold() {
     let ch = chain();
     let args = json!({"message": "hello"});
     let p = present(&ch, "echo", &args, Some("node-A"));
-    let anchors = [jwk(&ch.a)];
+    let anchors = [TrustAnchor::new(NODE, jwk(&ch.a))];
     let late = NOW + 601;
     let p_late = Presentation { chain: p.chain.clone(), pop: pop(&ch.c, &ch.child, "echo", &args, Some("node-A"), late).unwrap() };
-    denied(verify(&p_late, &Policy { trust_anchors: &anchors, audience: Some("node-A"), now: late }, "echo", &args), "expired");
+    denied(verify(&p_late, &Policy::for_audience(&anchors, "node-A", late), "echo", &args), "expired");
     // The child is clamped to its parent's lifetime.
     let (a, b, c) = (key(), key(), key());
     let root = issue_root(&a, NODE, &jwk(&b), tools(json!({"add": {}})), NOW, 60, 3).unwrap();
@@ -218,8 +218,8 @@ fn time_bounds_hold() {
 fn malformed_tokens_are_refused() {
     let ch = chain();
     let args = json!({});
-    let anchors = [jwk(&ch.a)];
-    let policy = Policy { trust_anchors: &anchors, audience: None, now: NOW };
+    let anchors = [TrustAnchor::new(NODE, jwk(&ch.a))];
+    let policy = Policy::new(&anchors, NOW);
     let base = json!({
         "jti": "r", "iss": NODE, "iat": NOW, "exp": NOW + 60, "cnf": {"jwk": jwk(&ch.c)},
         "del_depth": 0, "del_max_depth": 0,
@@ -233,7 +233,7 @@ fn malformed_tokens_are_refused() {
         verify(&Presentation { chain: vec![root], pop }, &policy, "add", &args)
     };
     with(&|_| {}).unwrap();
-    denied(with(&|c| c["authorization_details"][0]["tools"]["add"] = json!({"a": {"constraint_type": "regex", "pattern": ".*"}})), "invalid claims");
+    denied(with(&|c| c["authorization_details"][0]["tools"]["add"] = json!({"a": {"constraint_type": "regex", "pattern": ".*"}})), "unknown constraint_type");
     denied(with(&|c| c["cnf"]["jwk"]["d"] = json!("secret")), "private key");
     denied(with(&|c| c["iss"] = json!("not a uri")), "URI");
     denied(with(&|c| c["authorization_details"] = json!([])), "no attenuating_agent_token");
@@ -247,12 +247,12 @@ fn malformed_tokens_are_refused() {
     // Duplicate keys, which serde_json would silently collapse.
     let dup = base.to_string().replacen(r#""tools":{"add":{}}"#, r#""tools":{"add":{},"add":{"a":{"constraint_type":"exact","value":1}}}"#, 1);
     assert!(dup.contains(r#""add":{},"add""#));
-    let input = format!("{}.{}", URL_SAFE_NO_PAD.encode(br#"{"alg":"EdDSA"}"#), URL_SAFE_NO_PAD.encode(&dup));
+    let input = format!("{}.{}", URL_SAFE_NO_PAD.encode(br#"{"alg":"Ed25519","typ":"aat+jwt"}"#), URL_SAFE_NO_PAD.encode(&dup));
     let root = format!("{}.{}", input, URL_SAFE_NO_PAD.encode(ch.a.sign(input.as_bytes()).to_bytes()));
     let pop_dup = pop(&ch.c, &root, "add", &args, None, NOW).unwrap();
     denied(verify(&Presentation { chain: vec![root], pop: pop_dup }, &policy, "add", &args), "duplicate key");
 
-    // alg none, or anything but EdDSA.
+    // alg none, or anything but Ed25519 (the -01 `EdDSA` included).
     let good = sign_raw(&ch.a, &base);
     let none = format!("{}.{}.", URL_SAFE_NO_PAD.encode(br#"{"alg":"none"}"#), good.split('.').nth(1).unwrap());
     let pop_none = pop(&ch.c, &good, "add", &args, None, NOW).unwrap();

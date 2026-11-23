@@ -1,23 +1,25 @@
 //! Attenuating Agent Tokens, JWT/JWS profile of
-//! draft-niyikiza-oauth-attenuating-agent-tokens-01 (S4).
+//! draft-niyikiza-oauth-attenuating-agent-tokens-02 (S4).
 //!
 //! A root token grants tools to a holder key; each holder may derive a
 //! narrower token for the next agent, offline, and the last holder proves
-//! possession on every call. [`verify`] runs the draft's section 7 algorithm
+//! possession on every call. [`verify`] runs the draft's section 8 algorithm
 //! against the chain, the call and its proof of possession.
 //!
-//! Only Ed25519 (`EdDSA`) is accepted, the one algorithm the draft requires.
+//! Only Ed25519 (JWS `alg` `Ed25519`, RFC 9864) is accepted, the one
+//! algorithm the draft requires.
 
 mod constraint;
+mod grant;
 mod jws;
 mod token;
 mod verify;
 
 pub use constraint::{Constraint, MAX_CONSTRAINT_DEPTH};
 pub use ed25519_dalek::{SigningKey, VerifyingKey};
-pub use jws::Jwk;
-pub use token::{derive, derive_with, inspect, issue_root, issue_root_with, pop, Claims, Cnf, Presentation, Tools, AAT_TYPE};
-pub use verify::{verify, Policy, ReplayGuard, Verified};
+pub use jws::{Jwk, AAT_TYP, ALG, POP_TYP};
+pub use token::{derive, derive_with, inspect, issue_root, issue_root_with, pop, pop_with_nonce, Claims, Cnf, Presentation, Tools, AAT_TYPE};
+pub use verify::{verify, verify_json, Limits, Policy, ReplayGuard, TrustAnchor, Verified};
 
 /// Largest accepted token, in bytes (draft recommends 64 KiB).
 pub const MAX_TOKEN_SIZE: usize = 64 * 1024;

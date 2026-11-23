@@ -43,16 +43,18 @@ fn cross_type_rules() {
 }
 
 #[test]
-fn all_needs_a_one_to_one_match() {
+fn all_needs_every_parent_clause_covered() {
     let r = |max: i64| json!({"constraint_type": "range", "max": max});
     let parent = c(json!({"constraint_type": "all", "constraints": [r(10), r(5)]}));
-    // A greedy match gives r(3) to r(10) and is stuck on r(5); backtracking
-    // finds r(7) → r(10), r(3) → r(5).
     assert!(c(json!({"constraint_type": "all", "constraints": [r(3), r(7)]})).subsumes(&parent));
     assert!(!c(json!({"constraint_type": "all", "constraints": [r(6), r(7)]})).subsumes(&parent));
     assert!(c(json!({"constraint_type": "all", "constraints": [r(4), r(3), r(1)]})).subsumes(&parent));
-    // One derived clause cannot stand for two parent clauses.
-    assert!(!c(json!({"constraint_type": "all", "constraints": [r(3)]})).subsumes(&parent));
+    // One derived clause may serve several parent clauses (draft -02 section
+    // 4.5): r(3) is inside both r(10) and r(5).
+    assert!(c(json!({"constraint_type": "all", "constraints": [r(3)]})).subsumes(&parent));
+    let w = json!({"constraint_type": "wildcard"});
+    let five = json!({"constraint_type": "exact", "value": 5});
+    assert!(c(json!({"constraint_type": "all", "constraints": [five]})).subsumes(&c(json!({"constraint_type": "all", "constraints": [w.clone(), w]}))));
 }
 
 #[test]

@@ -1,5 +1,5 @@
-//! Compact JWS with EdDSA (Ed25519), the only algorithm this crate accepts,
-//! and the OKP JWK that carries the keys (RFC 7515, 7517, 8037).
+//! Compact JWS with Ed25519 (RFC 9864 `alg` value), the only algorithm this
+//! crate accepts, and the OKP JWK that carries the keys (RFC 7515, 7517, 8037).
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
@@ -9,9 +9,13 @@ use sha2::{Digest, Sha256};
 
 use crate::{deny, Error, Result};
 
-/// The JWS `alg` for Ed25519. Anything else, `none` included, is denied
-/// (draft section 8.13).
-pub const ALG: &str = "EdDSA";
+/// The JWS `alg` for Ed25519 (RFC 9864). Anything else, `none` and the
+/// deprecated polymorphic `EdDSA` included, is denied (draft section 9.11).
+pub const ALG: &str = "Ed25519";
+/// JWS `typ` of an AAT (draft section 3.5).
+pub const AAT_TYP: &str = "aat+jwt";
+/// JWS `typ` of a proof of possession (draft section 3.5).
+pub const POP_TYP: &str = "aat-pop+jwt";
 
 const THUMBPRINT_URI_PREFIX: &str = "urn:ietf:params:oauth:jwk-thumbprint:sha-256:";
 
@@ -68,12 +72,7 @@ pub(crate) struct Compact<'a> {
     pub signing_input: &'a str,
     pub payload_b64: &'a str,
     signature: Vec<u8>,
-    alg: String,
-}
-
-#[derive(Deserialize)]
-struct Header {
-    alg: String,
+    header: serde_json::Map<String, serde_json::Value>,
 }
 
 impl<'a> Compact<'a> {
@@ -82,20 +81,37 @@ impl<'a> Compact<'a> {
         let (Some(header), Some(payload), Some(signature), None) = (parts.next(), parts.next(), parts.next(), parts.next()) else {
             return Err(deny("not a compact JWS"));
         };
-        let header: Header = serde_json::from_slice(&unb64(header)?).map_err(|_| deny("invalid JWS header"))?;
+        let header = serde_json::from_slice(&unb64(header)?).map_err(|_| deny("invalid JWS header"))?;
         Ok(Compact {
             signing_input: &token[..token.len() - signature.len() - 1],
             payload_b64: payload,
             signature: unb64(signature)?,
-            alg: header.alg,
+            header,
         })
     }
 
-    /// Checks `alg` and the signature under `key`, then decodes the payload.
-    pub fn verify(&self, key: &Jwk) -> Result<Vec<u8>> {
-        if self.alg != ALG {
-            return Err(deny(format!("JWS alg {:?} is not allowed", self.alg)));
+    /// Steps 3a, 4a and 7a: `alg` on the allowlist, `typ` exactly `typ`, and
+    /// no `crit` (this enforcement point understands no extension header, so
+    /// any `crit` lists one it does not, or is malformed). Keys named by
+    /// header parameters (`jwk`, `jku`, `x5c`, ...) are never used.
+    pub fn check_header(&self, typ: &str) -> Result<()> {
+        let alg = self.header.get("alg").and_then(serde_json::Value::as_str);
+        if alg != Some(ALG) {
+            return Err(deny(format!("JWS alg {:?} is not allowed", alg)));
         }
+        if self.header.get("typ").and_then(serde_json::Value::as_str) != Some(typ) {
+            return Err(deny(format!("JWS typ is not {}", typ)));
+        }
+        if self.header.contains_key("crit") {
+            return Err(deny("JWS crit lists a parameter this enforcement point does not understand"));
+        }
+        Ok(())
+    }
+
+    /// Checks the header for `typ` and the signature under `key`, then
+    /// decodes the payload.
+    pub fn verify(&self, key: &Jwk, typ: &str) -> Result<Vec<u8>> {
+        self.check_header(typ)?;
         let key = key.verifying_key()?;
         let signature = Signature::from_slice(&self.signature).map_err(|_| deny("malformed signature"))?;
         key.verify(self.signing_input.as_bytes(), &signature).map_err(|_| deny("bad signature"))?;
@@ -125,9 +141,9 @@ impl<'a> Compact<'a> {
     }
 }
 
-/// Signs `payload` (already serialized) as a compact JWS.
-pub(crate) fn sign(key: &SigningKey, payload: &[u8]) -> String {
-    let header = b64(br#"{"alg":"EdDSA"}"#);
+/// Signs `payload` (already serialized) as a compact JWS of type `typ`.
+pub(crate) fn sign(key: &SigningKey, payload: &[u8], typ: &str) -> String {
+    let header = b64(format!(r#"{{"alg":"{}","typ":"{}"}}"#, ALG, typ));
     let signing_input = format!("{}.{}", header, b64(payload));
     let signature = key.sign(signing_input.as_bytes());
     format!("{}.{}", signing_input, b64(signature.to_bytes()))

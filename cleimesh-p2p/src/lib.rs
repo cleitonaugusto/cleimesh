@@ -531,9 +531,9 @@ impl CleiMeshNode {
     /// that carried the request, so any transport peer may relay it.
     fn authorize_presentation(&mut self, presentation: &aat::Presentation, tool: &str, args: &serde_json::Value) -> std::result::Result<(Authority, SandboxConfig), String> {
         let now = unix_now();
-        let anchors = [self.aat_trust_anchor()];
+        let anchors = [aat::TrustAnchor::new(format!("urn:cleimesh:node:{}", self.local_peer_id), self.aat_trust_anchor())];
         let audience = self.aat_audience();
-        let policy = aat::Policy { trust_anchors: &anchors, audience: Some(&audience), now };
+        let policy = aat::Policy::for_audience(&anchors, &audience, now);
         let verified = aat::verify(presentation, &policy, tool, args).map_err(|e| e.to_string())?;
         let (grant, root_grant) = grants::effective(&verified.chain, tool)?;
         let lineage: Vec<String> = verified.chain.iter().map(|c| c.cnf.jwk.thumbprint_uri()).collect();

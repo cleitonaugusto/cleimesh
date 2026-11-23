@@ -3,8 +3,10 @@
 //! carrying it is denied (fail-closed).
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use url::Url;
+
+use crate::{deny, Result};
 
 /// Deepest `all`/`any` nesting accepted (draft recommends 32).
 pub const MAX_CONSTRAINT_DEPTH: usize = 32;
@@ -18,9 +20,11 @@ pub enum Constraint {
         min: Option<f64>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         max: Option<f64>,
-        #[serde(default = "inclusive")]
+        // Written only when exclusive: the draft forbids an inclusivity flag
+        // without its bound, and `true` is the default anyway.
+        #[serde(default = "inclusive", skip_serializing_if = "is_inclusive")]
         min_inclusive: bool,
-        #[serde(default = "inclusive")]
+        #[serde(default = "inclusive", skip_serializing_if = "is_inclusive")]
         max_inclusive: bool,
     },
     OneOf { values: Vec<Value> },
@@ -41,6 +45,10 @@ pub enum Constraint {
 
 fn inclusive() -> bool {
     true
+}
+
+fn is_inclusive(flag: &bool) -> bool {
+    *flag
 }
 
 /// JSON equality after JCS canonicalization, so `1` and `1.0` are equal and
@@ -146,12 +154,102 @@ impl Constraint {
             (HostIn { hosts }, HostIn { hosts: p }) => host_subset(hosts, p),
             (Contains { required }, Contains { required: p }) => all_members(required, p),
             (Subset { allowed }, Subset { allowed: p }) => all_members(p, allowed),
-            (All { constraints }, All { constraints: p }) => match_all(p, constraints, &mut vec![false; constraints.len()], 0),
+            // Every parent clause subsumes at least one derived clause; one
+            // derived clause may serve several (draft section 4.5).
+            (All { constraints }, All { constraints: p }) => {
+                !constraints.is_empty() && p.iter().all(|pc| constraints.iter().any(|c| c.subsumes(pc)))
+            }
             (Any { constraints }, Any { constraints: p }) => {
                 !constraints.is_empty() && constraints.iter().all(|c| p.iter().any(|pc| c.subsumes(pc)))
             }
             _ => false,
         }
+    }
+
+    /// Reads a constraint the way the draft requires it written (section
+    /// 3.4, "well-formed"): a known type, no undefined member, members of the
+    /// right JSON type, `one_of`/`all`/`any` non-empty, a range whose `min`
+    /// is not above its `max` and whose inclusivity flags sit beside their
+    /// bound, and nesting at most `max_depth` deep. `optional` is accepted
+    /// only on a top-level map entry (`top`); the caller reads it.
+    pub(crate) fn parse(value: &Value, top: bool, max_depth: usize) -> Result<Constraint> {
+        Self::parse_at(value, top, 1, max_depth)
+    }
+
+    fn parse_at(value: &Value, top: bool, depth: usize, max_depth: usize) -> Result<Constraint> {
+        if depth > max_depth {
+            return Err(deny("constraint tree too deep"));
+        }
+        let obj = value.as_object().ok_or_else(|| deny("constraint is not an object"))?;
+        let ty = obj.get("constraint_type").and_then(Value::as_str).ok_or_else(|| deny("constraint has no constraint_type"))?;
+        let members: &[&str] = match ty {
+            "exact" => &["value"],
+            "range" => &["min", "max", "min_inclusive", "max_inclusive"],
+            "one_of" => &["values"],
+            "not_one_of" => &["excluded"],
+            "contains" => &["required"],
+            "subset" => &["allowed"],
+            "wildcard" => &[],
+            "all" | "any" => &["constraints"],
+            "host_in" => &["hosts"],
+            other => return Err(deny(format!("unknown constraint_type {:?}", other))),
+        };
+        if let Some(extra) = obj.keys().find(|k| *k != "constraint_type" && !(top && *k == "optional") && !members.contains(&k.as_str())) {
+            return Err(deny(format!("{} constraint has undefined member {}", ty, extra)));
+        }
+        Ok(match ty {
+            "exact" => {
+                let value = obj.get("value").ok_or_else(|| deny("exact has no value"))?;
+                if value.is_array() || value.is_object() {
+                    return Err(deny("exact value is not a scalar"));
+                }
+                Constraint::Exact { value: value.clone() }
+            }
+            "range" => {
+                let bound = |k: &str| match obj.get(k) {
+                    None => Ok(None),
+                    Some(n) => n.as_f64().filter(|_| n.is_number()).map(Some).ok_or_else(|| deny(format!("range {} is not a number", k))),
+                };
+                let (min, max) = (bound("min")?, bound("max")?);
+                if let (Some(lo), Some(hi)) = (min, max) {
+                    if lo > hi {
+                        return Err(deny("range min is greater than max"));
+                    }
+                }
+                let flag = |k: &str, bound: Option<f64>| match obj.get(k) {
+                    None => Ok(true),
+                    Some(Value::Bool(b)) if bound.is_some() => Ok(*b),
+                    Some(_) => Err(deny(format!("range {} is not a boolean beside its bound", k))),
+                };
+                Constraint::Range { min, max, min_inclusive: flag("min_inclusive", min)?, max_inclusive: flag("max_inclusive", max)? }
+            }
+            "one_of" => {
+                let values = array(obj, "values")?;
+                if values.is_empty() {
+                    return Err(deny("one_of has no values"));
+                }
+                Constraint::OneOf { values: values.clone() }
+            }
+            "not_one_of" => Constraint::NotOneOf { excluded: array(obj, "excluded")?.clone() },
+            "contains" => Constraint::Contains { required: array(obj, "required")?.clone() },
+            "subset" => Constraint::Subset { allowed: array(obj, "allowed")?.clone() },
+            "wildcard" => Constraint::Wildcard,
+            "host_in" => Constraint::HostIn {
+                hosts: array(obj, "hosts")?.iter().map(|h| h.as_str().map(str::to_string).ok_or_else(|| deny("host_in host is not a string"))).collect::<Result<_>>()?,
+            },
+            _ => {
+                let clauses = array(obj, "constraints")?;
+                if clauses.is_empty() {
+                    return Err(deny(format!("{} has no constraints", ty)));
+                }
+                let clauses = clauses.iter().map(|c| Self::parse_at(c, false, depth + 1, max_depth)).collect::<Result<Vec<_>>>()?;
+                if ty == "all" {
+                    Constraint::All { constraints: clauses }
+                } else {
+                    Constraint::Any { constraints: clauses }
+                }
+            }
+        })
     }
 
     /// Structural checks the type system does not cover: nesting depth and
@@ -169,6 +267,10 @@ impl Constraint {
     }
 }
 
+fn array<'a>(obj: &'a Map<String, Value>, key: &str) -> Result<&'a Vec<Value>> {
+    obj.get(key).and_then(Value::as_array).ok_or_else(|| deny(format!("{} is not an array", key)))
+}
+
 /// A derived range bound against its parent's. A missing parent bound is
 /// unbounded; a missing derived bound is only valid if the parent's is
 /// missing too. At an equal value, the derived bound may only go from
@@ -179,22 +281,6 @@ fn bound_ok(child: Option<f64>, child_inc: bool, parent: Option<f64>, parent_inc
         (None, Some(_)) => false,
         (Some(c), Some(p)) => tighter(c, p) || (c == p && (parent_inc || !child_inc)),
     }
-}
-
-/// One-to-one assignment of every parent `all` clause to a distinct derived
-/// clause that subsumes it, with backtracking (draft section 4.5).
-fn match_all(parents: &[Constraint], derived: &[Constraint], used: &mut Vec<bool>, idx: usize) -> bool {
-    let Some(parent) = parents.get(idx) else { return true };
-    for i in 0..derived.len() {
-        if !used[i] && derived[i].subsumes(parent) {
-            used[i] = true;
-            if match_all(parents, derived, used, idx + 1) {
-                return true;
-            }
-            used[i] = false;
-        }
-    }
-    false
 }
 
 #[cfg(test)]

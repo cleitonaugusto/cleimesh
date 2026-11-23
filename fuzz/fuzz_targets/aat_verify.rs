@@ -2,7 +2,7 @@
 //! and must never accept a presentation it can't fully check.
 #![no_main]
 
-use cleimesh_aat::{verify, Policy, Presentation};
+use cleimesh_aat::{verify, Policy, Presentation, TrustAnchor};
 use cleimesh_fuzz::*;
 use libfuzzer_sys::fuzz_target;
 
@@ -18,8 +18,8 @@ fuzz_target!(|data: &[u8]| {
             Presentation { chain: parts, pop }
         }
     };
-    let anchors = [anchor_jwk()];
-    let policy = Policy { trust_anchors: &anchors, audience: Some(AUDIENCE), now: NOW };
+    let anchors = [TrustAnchor::new("urn:fuzz", anchor_jwk())];
+    let policy = Policy::for_audience(&anchors, AUDIENCE, NOW);
     let (tool, args) = call();
     if let Ok(verified) = verify(&presentation, &policy, tool, &args) {
         // Whatever passed is a chain of the claimed length, rooted in the anchor.

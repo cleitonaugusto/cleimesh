@@ -8,7 +8,7 @@ use serde_json::{Map, Value};
 
 use crate::constraint::Constraint;
 use crate::jws::{self, Compact, Jwk};
-use crate::{deny, Result, SigningKey, MAX_DELEGATION_DEPTH, MAX_TOKEN_LIFETIME};
+use crate::{deny, Result, SigningKey, MAX_CONSTRAINT_DEPTH, MAX_DELEGATION_DEPTH, MAX_TOKEN_LIFETIME};
 
 /// `type` of the `authorization_details` entry this profile reads.
 pub const AAT_TYPE: &str = "attenuating_agent_token";
@@ -70,8 +70,11 @@ impl Claims {
         self.authorization_details.iter().filter(move |d| d.get("type").and_then(Value::as_str) == Some(ty))
     }
 
+    /// Signs the claims as JCS-canonical JSON, so the signing input (and the
+    /// child's `par_hash`) is reproducible across implementations.
     fn sign(&self, key: &SigningKey) -> Result<String> {
-        Ok(jws::sign(key, &serde_json::to_vec(self)?))
+        let payload = serde_json_canonicalizer::to_vec(self).map_err(|e| deny(format!("cannot canonicalize: {}", e)))?;
+        Ok(jws::sign(key, &payload, jws::AAT_TYP))
     }
 }
 
@@ -170,7 +173,8 @@ pub fn derive_with(parent: &str, holder_key: &SigningKey, new_holder: &Jwk, tool
         authorization_details: details(tools, extra)?,
         extra: Map::new(),
     };
-    crate::verify::check_link(&parent_claims, &compact.signing_input_hash(), &child, now)?;
+    let parent_grant = crate::grant::grant(&parent_claims.authorization_details, MAX_CONSTRAINT_DEPTH)?;
+    crate::verify::check_link(&parent_claims, &parent_grant, &compact.signing_input_hash(), &child, now, &crate::Limits::default())?;
     child.sign(holder_key)
 }
 
@@ -194,15 +198,25 @@ pub(crate) struct PopClaims {
     pub jti: String,
     pub iat: i64,
     pub aat_id: String,
+    /// base64url(SHA-256(leaf JWS Signing Input)): binds the proof to the
+    /// exact leaf token, not only to its `jti`.
+    pub aat_hash: String,
     pub aat_tool: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aat_aud: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nonce: Option<String>,
     pub hta: Value,
 }
 
 /// Proof of possession for calling `tool` with `args` (a JSON object) under
 /// `leaf`, signed by its holder. `aud` names the enforcement point.
 pub fn pop(holder_key: &SigningKey, leaf: &str, tool: &str, args: &Value, aud: Option<&str>, now: i64) -> Result<String> {
+    pop_with_nonce(holder_key, leaf, tool, args, aud, None, now)
+}
+
+/// Like [`pop`], also carrying a `nonce` the enforcement point issued.
+pub fn pop_with_nonce(holder_key: &SigningKey, leaf: &str, tool: &str, args: &Value, aud: Option<&str>, nonce: Option<&str>, now: i64) -> Result<String> {
     if !args.is_object() {
         return Err(deny("tool arguments must be a JSON object"));
     }
@@ -211,12 +225,14 @@ pub fn pop(holder_key: &SigningKey, leaf: &str, tool: &str, args: &Value, aud: O
         jti: uuid::Uuid::new_v4().to_string(),
         iat: now,
         aat_id: leaf.unverified_jti()?,
+        aat_hash: leaf.signing_input_hash(),
         aat_tool: tool.to_string(),
         aat_aud: aud.map(str::to_string),
+        nonce: nonce.map(str::to_string),
         hta: args.clone(),
     };
     let payload = serde_json_canonicalizer::to_vec(&claims).map_err(|e| deny(format!("cannot canonicalize: {}", e)))?;
-    Ok(jws::sign(holder_key, &payload))
+    Ok(jws::sign(holder_key, &payload, jws::POP_TYP))
 }
 
 impl PopClaims {
@@ -228,7 +244,7 @@ impl PopClaims {
 
 /// Walks the JSON and fails on the first object with a repeated key.
 /// `serde_json::Value` would keep the last one silently.
-fn reject_duplicate_keys(payload: &[u8]) -> Result<()> {
+pub(crate) fn reject_duplicate_keys(payload: &[u8]) -> Result<()> {
     struct Checked;
     struct V;
     impl<'de> Deserialize<'de> for Checked {

@@ -198,28 +198,55 @@ impl ServerHandler for Gateway {
 /// while it runs. Nothing confines the server itself: it reaches whatever
 /// its OS user can, so a token granting it directories or network is refused
 /// rather than recorded as if it held.
+///
+/// Several servers can sit behind one wrapper: one node, one receipt log and
+/// one view of the agent's taint across all of them, so content read through
+/// one server taints the agent for every other.
 pub struct Wrapper {
     node: Mutex<CleiMeshNode>,
-    server: rmcp::service::RunningService<rmcp::RoleClient, ()>,
-    /// The wrapped command line's digest, as the receipts name the server.
-    server_sha256: String,
+    backends: Vec<Wrapped>,
+    /// Tool name → the backend that offers it.
+    route: std::collections::HashMap<String, usize>,
     credentials: Option<(Vec<Vec<String>>, aat::SigningKey)>,
     audience: String,
     tools: Vec<Tool>,
 }
 
+/// One wrapped server.
+pub struct Wrapped {
+    pub name: String,
+    pub server: rmcp::service::RunningService<rmcp::RoleClient, ()>,
+    /// The wrapped command line's digest, as the receipts name the server.
+    pub server_sha256: String,
+    /// The held chain that is this server's own token (`mcp wrap --servers`):
+    /// only the tools it grants are taken from this server. `None`: any held
+    /// chain.
+    pub chain: Option<usize>,
+}
+
 impl Wrapper {
     pub async fn new(
         node: CleiMeshNode,
-        server: rmcp::service::RunningService<rmcp::RoleClient, ()>,
-        server_sha256: String,
+        backends: Vec<Wrapped>,
         credentials: Option<(Vec<Vec<String>>, aat::SigningKey)>,
     ) -> Result<Self, String> {
-        let offered = server.list_all_tools().await.map_err(|e| format!("cannot list the wrapped server's tools: {}", e))?;
-        let granted: Vec<String> = credentials.iter().flat_map(|(chains, _)| chains.iter().flat_map(|c| granted_tools(c))).collect();
-        let tools = offered.into_iter().filter(|t| granted.iter().any(|g| *g == t.name)).collect();
+        let chains: &[Vec<String>] = credentials.as_ref().map(|(c, _)| c.as_slice()).unwrap_or_default();
+        let (mut tools, mut route) = (Vec::new(), std::collections::HashMap::new());
+        for (i, backend) in backends.iter().enumerate() {
+            let granted: Vec<String> = match backend.chain {
+                Some(c) => chains.get(c).map(|c| granted_tools(c)).unwrap_or_default(),
+                None => chains.iter().flat_map(|c| granted_tools(c)).collect(),
+            };
+            let offered = backend.server.list_all_tools().await.map_err(|e| format!("cannot list the tools of {}: {}", backend.name, e))?;
+            for tool in offered.into_iter().filter(|t| granted.iter().any(|g| *g == t.name)) {
+                if let Some(j) = route.insert(tool.name.to_string(), i) {
+                    return Err(format!("tool {} is offered by both {} and {}; grant it from one of them only", tool.name, backends[j].name, backend.name));
+                }
+                tools.push(tool);
+            }
+        }
         let audience = node.aat_audience();
-        Ok(Wrapper { node: Mutex::new(node), server, server_sha256, credentials, audience, tools })
+        Ok(Wrapper { node: Mutex::new(node), backends, route, credentials, audience, tools })
     }
 }
 
@@ -254,7 +281,10 @@ impl ServerHandler for Wrapper {
             presentation,
             context: call_context,
         };
-        let server = &self.server;
+        let Some(backend) = self.route.get(&tool).map(|i| &self.backends[*i]) else {
+            return Ok(error_result(format!("no wrapped server offers {}", tool)));
+        };
+        let server = &backend.server;
         let run = |request: ToolRequest| async move {
             let mut params = CallToolRequestParams::new(tool);
             params.arguments = arguments;
@@ -267,7 +297,7 @@ impl ServerHandler for Wrapper {
             };
             cleimesh_p2p::ToolResponse { request_id: request.request_id, success, output, error }
         };
-        let response = self.node.lock().await.run_external(CALLER, request, &self.server_sha256, run).await;
+        let response = self.node.lock().await.run_external(CALLER, request, &backend.server_sha256, run).await;
         // The server's own result, error or not, goes back as it gave it.
         if let Ok(result) = serde_json::from_value::<CallToolResult>(response.output.clone()) {
             return Ok(result.into());

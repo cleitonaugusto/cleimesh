@@ -1,0 +1,59 @@
+== cleimesh mcp add fetch --taints fetch -- python -m mcp_server_fetch
+Token for fetch: /root/.config/cleimesh/mcp/fetch.json (30 days)
+  grants fetch (taints the agent)
+1 server(s) behind one wrapper (fetch): one receipt log, one view of taint across them. Every call leaves a signed receipt (cleimesh audit verify).
+== cleimesh mcp add fs --clean-only write_file ... -- mcp-server-filesystem /data
+Secure MCP Filesystem Server running on stdio
+Client does not support MCP Roots, using allowed directories set from server args: [ '/data' ]
+Token for fs: /root/.config/cleimesh/mcp/fs.json (30 days)
+  grants read_file
+  grants read_text_file
+  grants read_media_file
+  grants read_multiple_files
+  grants write_file (refused once the agent is tainted)
+  grants edit_file (refused once the agent is tainted)
+  grants create_directory
+  grants list_directory
+  grants list_directory_with_sizes
+  grants directory_tree
+  grants move_file (refused once the agent is tainted)
+  grants search_files
+  grants get_file_info
+  grants list_allowed_directories
+2 server(s) behind one wrapper (fetch, fs): one receipt log, one view of taint across them. Every call leaves a signed receipt (cleimesh audit verify).
+== agent run
+cleimesh mcp wrap: fetch (python) is not sandboxed; the token limits which of its tools and arguments get through, and every call is recorded. The node key and receipt log are in this process, under this OS user
+cleimesh mcp wrap: fs (mcp-server-filesystem) is not sandboxed; the token limits which of its tools and arguments get through, and every call is recorded. The node key and receipt log are in this process, under this OS user
+Secure MCP Filesystem Server running on stdio
+Client does not support MCP Roots, using allowed directories set from server args: [ '/data' ]
+Received exception from stream: 6 validation errors for JSONRPCMessage
+JSONRPCRequest.method
+  Field required [type=missing, input_value={'jsonrpc': '2.0', 'error...ge': 'Invalid request'}}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.14/v/missing
+JSONRPCRequest.id
+  Field required [type=missing, input_value={'jsonrpc': '2.0', 'error...ge': 'Invalid request'}}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.14/v/missing
+JSONRPCNotification.method
+  Field required [type=missing, input_value={'jsonrpc': '2.0', 'error...ge': 'Invalid request'}}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.14/v/missing
+JSONRPCResponse.id
+  Field required [type=missing, input_value={'jsonrpc': '2.0', 'error...ge': 'Invalid request'}}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.14/v/missing
+JSONRPCResponse.result
+  Field required [type=missing, input_value={'jsonrpc': '2.0', 'error...ge': 'Invalid request'}}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.14/v/missing
+JSONRPCError.id
+  Field required [type=missing, input_value={'jsonrpc': '2.0', 'error...ge': 'Invalid request'}}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.14/v/missing
+  client entry cleimesh-mcp: 15 tools from fetch + filesystem
+  1. write_file notes.txt (clean)              -> ok | Successfully wrote to /data/public/notes.txt
+  2. fetch the release-notes page              -> ok | Contents of http://127.0.0.1:8000/: ## Release notes  All good.
+  3. read_text_file secrets.txt                -> ok | AWS_SECRET_ACCESS_KEY=demo-not-a-real-key 
+  4. write_file leak.txt (injected)            -> REFUSED | Authorization failed: write_file refused: holder urn:ietf:params:oauth:jwk-thumbprint:sha-256:qIUvXok4rOOqVse1kqLBIh6l82RiB2za6l920kg6JUs in this chain received
+== leak.txt exists?
+no
+== cleimesh taint list
+urn:ietf:params:oauth:jwk-thumbprint:sha-256:qIUvXok4rOOqVse1kqLBIh6l82RiB2za6l920kg6JUs tainted by receipt 01a20d3e-0055-768f-9e54-95f7eaa268bd
+== cleimesh audit verify
+OK: 7 receipts in /root/.local/share/cleimesh/receipts/receipts.jsonl, signed by 12D3KooWKnXqUuFYpZ34Bx1LQHXzjtDXt3VbHZFdxavDxfsFgqHp
+  head /root/.local/share/cleimesh/receipts/receipts.jsonl.head matches

@@ -291,19 +291,27 @@ enum McpCommands {
         /// With --allowance: spend ledger across restarts (calls, amount spent).
         #[arg(long, value_name = "FILE")]
         ledger: Option<PathBuf>,
+        /// Wrap every server listed in this file (from `cleimesh mcp add`),
+        /// each with its own token, behind one node: one receipt log and one
+        /// view of the agent's taint across all of them. Instead of --token
+        /// and COMMAND
+        #[arg(long, value_name = "FILE", conflicts_with_all = ["token", "allowance"])]
+        servers: Option<PathBuf>,
         /// The MCP server's command and its arguments, after `--`
-        #[arg(last = true, required = true, value_name = "COMMAND")]
+        #[arg(last = true, required_unless_present = "servers", value_name = "COMMAND")]
         command: Vec<String>,
     },
-    /// One command: put an MCP server behind a token and register it with
-    /// Claude Code. Creates the node and client keys if missing, asks the
-    /// server for its tools (or takes --tool), issues a token for exactly
-    /// those, and runs `claude mcp add NAME -- cleimesh mcp wrap --token FILE
-    /// -- COMMAND`. Every call then leaves a signed receipt. Run it again to
-    /// renew the token.
+    /// One command: put an MCP server behind a token. Creates the node and
+    /// client keys if missing, asks the server for its tools (or takes
+    /// --tool), issues a token for exactly those, adds the server to
+    /// servers.json and registers `cleimesh mcp wrap --servers servers.json`
+    /// with Claude Code once, as `cleimesh-mcp`. Every server added runs
+    /// behind that one wrapper, so what the agent reads through one taints
+    /// it for all. Every call leaves a signed receipt. Run it again to renew
+    /// the token.
     /// Example: cleimesh mcp add fetch --taints fetch -- uvx mcp-server-fetch
     Add {
-        /// Name the client lists the server under
+        /// Name of the server in servers.json
         name: String,
         /// Grant only this tool (repeatable). Default: every tool the server lists
         #[arg(long = "tool", value_name = "NAME")]
@@ -326,15 +334,18 @@ enum McpCommands {
         /// Windsurf...), instead of running `claude mcp add`
         #[arg(long)]
         print: bool,
-        /// Where to write the token (default: <config dir>/cleimesh/mcp/NAME.json)
-        #[arg(long, value_name = "FILE")]
-        out: Option<PathBuf>,
+        /// Directory for the tokens and servers.json (default: <config dir>/cleimesh/mcp)
+        #[arg(long, value_name = "DIR")]
+        dir: Option<PathBuf>,
         /// Client key the token is issued to (default: ~/.config/cleimesh/client.key)
         #[arg(long, value_name = "FILE")]
         holder: Option<PathBuf>,
         /// Node key that signs the token (default: ~/.config/cleimesh/identity.key)
         #[arg(long)]
         identity: Option<PathBuf>,
+        /// Receipt log (default: ~/.local/share/cleimesh/receipts/receipts.jsonl)
+        #[arg(long, value_name = "FILE")]
+        receipts: Option<PathBuf>,
         /// The MCP server's command and its arguments, after `--`
         #[arg(last = true, required = true, value_name = "COMMAND")]
         command: Vec<String>,
@@ -753,18 +764,18 @@ async fn run(cli: Cli) -> Result<()> {
             }
         }
         Commands::Mcp(McpCommands::Serve { token, holder, node, identity, receipts }) => mcp_serve(token, holder, node, identity, receipts).await?,
-        Commands::Mcp(McpCommands::Wrap { token, holder, identity, receipts, allowance, owner, agent, ledger, command }) => {
+        Commands::Mcp(McpCommands::Wrap { token, holder, identity, receipts, allowance, owner, agent, ledger, servers, command }) => {
             match allowance {
                 Some(allowance) => {
                     let owner = owner.ok_or_else(|| cleimesh_core::CleiMeshError::Internal(anyhow::anyhow!("--allowance needs --owner <owner.key.pub.json>")))?;
                     let agent = agent.ok_or_else(|| cleimesh_core::CleiMeshError::Internal(anyhow::anyhow!("--allowance needs --agent <agent.key>")))?;
                     allowance::wrap(allowance, agent, owner, ledger, receipts, command).await?
                 }
-                None => mcp_wrap(token, holder, identity, receipts, command).await?,
+                None => mcp_wrap(token, holder, identity, receipts, servers, command).await?,
             }
         }
-        Commands::Mcp(McpCommands::Add { name, tools, taints, clean_only, ttl, scope, print, out, holder, identity, command }) => {
-            mcp_add(McpAdd { name, tools, taints, clean_only, ttl, scope, print, out, holder, identity, command }).await?
+        Commands::Mcp(McpCommands::Add { name, tools, taints, clean_only, ttl, scope, print, dir, holder, identity, receipts, command }) => {
+            mcp_add(McpAdd { name, tools, taints, clean_only, ttl, scope, print, dir, holder, identity, receipts, command }).await?
         }
         Commands::Allowance(cmd) => match cmd {
             AllowanceCommands::Keygen { out } => allowance::keygen(&out)?,
@@ -1122,14 +1133,47 @@ async fn mcp_serve(tokens: Vec<PathBuf>, holder: Option<PathBuf>, node: Option<S
     Ok(())
 }
 
-async fn mcp_wrap(tokens: Vec<PathBuf>, holder: Option<PathBuf>, identity: Option<PathBuf>, receipts: Option<PathBuf>, command: Vec<String>) -> Result<()> {
+/// The servers file `cleimesh mcp add` keeps and `mcp wrap --servers` reads.
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct ServersFile {
+    servers: std::collections::BTreeMap<String, ServerEntry>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ServerEntry {
+    /// The server's command line.
+    command: Vec<String>,
+    /// Its token chain file.
+    token: PathBuf,
+}
+
+/// Start one MCP server to wrap, as a client of it.
+async fn start_backend(name: &str, command: &[String], chain: Option<usize>) -> Result<mcp::Wrapped> {
+    use rmcp::ServiceExt;
+    eprintln!(
+        "cleimesh mcp wrap: {} ({}) is not sandboxed; the token limits which of its tools and arguments get through, \
+         and every call is recorded. The node key and receipt log are in this process, under this OS user",
+        name, command[0]
+    );
+    let mut child = tokio::process::Command::new(&command[0]);
+    child.args(&command[1..]);
+    let transport = rmcp::transport::TokioChildProcess::new(child).map_err(|e| anyhow::anyhow!("cannot start {}: {}", command[0], e))?;
+    let server = ().serve(transport).await.map_err(|e| anyhow::anyhow!("{} did not start as an MCP server: {}", command[0], e))?;
+    // The command line may carry secrets (API keys); receipts keep its digest.
+    let server_sha256 = cleimesh_receipt::sha256_hex(serde_json::to_string(command).unwrap_or_default().as_bytes());
+    Ok(mcp::Wrapped { name: name.to_string(), server, server_sha256, chain })
+}
+
+async fn mcp_wrap(
+    tokens: Vec<PathBuf>,
+    holder: Option<PathBuf>,
+    identity: Option<PathBuf>,
+    receipts: Option<PathBuf>,
+    servers: Option<PathBuf>,
+    command: Vec<String>,
+) -> Result<()> {
     use rmcp::ServiceExt;
 
-    eprintln!(
-        "cleimesh mcp wrap: {} is not sandboxed; the token limits which of its tools and arguments get through, \
-         and every call is recorded. The node key and receipt log are in this process, under this OS user",
-        command[0]
-    );
     let config = P2PConfig {
         listen_addresses: Vec::new(),
         enable_mdns: false,
@@ -1138,6 +1182,22 @@ async fn mcp_wrap(tokens: Vec<PathBuf>, holder: Option<PathBuf>, identity: Optio
         ..P2PConfig::default()
     };
     let node = CleiMeshNode::new(config, AgentIdentity::new("cli-mcp-wrap"))?;
+
+    let (tokens, mut backends) = match servers {
+        Some(path) => {
+            let file: ServersFile = serde_json::from_str(&std::fs::read_to_string(&path).map_err(|e| anyhow::anyhow!("Cannot read {}: {}", path.display(), e))?)
+                .map_err(|e| anyhow::anyhow!("Invalid {}: {}", path.display(), e))?;
+            if file.servers.is_empty() {
+                return Err(anyhow::anyhow!("{} lists no servers (add one with `cleimesh mcp add`)", path.display()).into());
+            }
+            let mut backends = Vec::new();
+            for (i, (name, entry)) in file.servers.iter().enumerate() {
+                backends.push(start_backend(name, &entry.command, Some(i)).await?);
+            }
+            (file.servers.into_values().map(|e| e.token).collect::<Vec<_>>(), backends)
+        }
+        None => (tokens, vec![start_backend(&command[0], &command, None).await?]),
+    };
     let credentials = if tokens.is_empty() {
         eprintln!("cleimesh mcp wrap: no --token, no tool of the wrapped server is offered");
         None
@@ -1146,14 +1206,10 @@ async fn mcp_wrap(tokens: Vec<PathBuf>, holder: Option<PathBuf>, identity: Optio
         let holder_key = node_key::aat_signing_key(&node_key::load_or_generate(&identity_key_path(holder, node_key::CLIENT_KEY_FILE)?)?)?;
         Some((chains, holder_key))
     };
-
-    let mut child = tokio::process::Command::new(&command[0]);
-    child.args(&command[1..]);
-    let transport = rmcp::transport::TokioChildProcess::new(child).map_err(|e| anyhow::anyhow!("cannot start {}: {}", command[0], e))?;
-    let server = ().serve(transport).await.map_err(|e| anyhow::anyhow!("{} did not start as an MCP server: {}", command[0], e))?;
-    // The command line may carry secrets (API keys); receipts keep its digest.
-    let server_sha256 = cleimesh_receipt::sha256_hex(serde_json::to_string(&command).unwrap_or_default().as_bytes());
-    let wrapper = mcp::Wrapper::new(node, server, server_sha256, credentials).await.map_err(|e| anyhow::anyhow!(e))?;
+    let wrapper = match mcp::Wrapper::new(node, std::mem::take(&mut backends), credentials).await {
+        Ok(w) => w,
+        Err(e) => return Err(anyhow::anyhow!(e).into()),
+    };
 
     let service = wrapper
         .serve(rmcp::transport::stdio())
@@ -1163,6 +1219,9 @@ async fn mcp_wrap(tokens: Vec<PathBuf>, holder: Option<PathBuf>, identity: Optio
     Ok(())
 }
 
+/// The client entry `cleimesh mcp add` registers: one, for every server.
+const MCP_ENTRY: &str = "cleimesh-mcp";
+
 struct McpAdd {
     name: String,
     tools: Vec<String>,
@@ -1171,14 +1230,16 @@ struct McpAdd {
     ttl: i64,
     scope: Option<String>,
     print: bool,
-    out: Option<PathBuf>,
+    dir: Option<PathBuf>,
     holder: Option<PathBuf>,
     identity: Option<PathBuf>,
+    receipts: Option<PathBuf>,
     command: Vec<String>,
 }
 
-/// `cleimesh mcp add`: keys, the server's tool list, a token for it, and the
-/// `mcp wrap` line registered with the client.
+/// `cleimesh mcp add`: keys, the server's tool list, a token for it, an entry
+/// in servers.json, and the one `mcp wrap --servers` line registered with the
+/// client.
 async fn mcp_add(a: McpAdd) -> Result<()> {
     use rmcp::ServiceExt;
     let fail = |m: String| -> cleimesh_core::CleiMeshError { anyhow::anyhow!(m).into() };
@@ -1190,6 +1251,17 @@ async fn mcp_add(a: McpAdd) -> Result<()> {
     let client_path = identity_key_path(a.holder.clone(), node_key::CLIENT_KEY_FILE)?;
     let node = node_key::load_or_generate(&node_path)?;
     let client = node_key::load_or_generate(&client_path)?;
+    let dir = match a.dir {
+        Some(d) => d,
+        None => node_path.parent().map(|d| d.join("mcp")).ok_or_else(|| fail("No config directory; pass --dir".into()))?,
+    };
+    std::fs::create_dir_all(&dir).map_err(|e| fail(format!("Cannot create {}: {}", dir.display(), e)))?;
+    let servers_path = dir.join("servers.json");
+    let mut servers: ServersFile = match std::fs::read_to_string(&servers_path) {
+        Ok(json) => serde_json::from_str(&json).map_err(|e| fail(format!("Invalid {}: {}", servers_path.display(), e)))?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => ServersFile::default(),
+        Err(e) => return Err(fail(format!("Cannot read {}: {}", servers_path.display(), e))),
+    };
 
     let granted: Vec<String> = if a.tools.is_empty() {
         let mut child = tokio::process::Command::new(&a.command[0]);
@@ -1208,6 +1280,13 @@ async fn mcp_add(a: McpAdd) -> Result<()> {
     for t in a.taints.iter().chain(&a.clean_only) {
         if !granted.contains(t) {
             return Err(fail(format!("{} is not a granted tool (granted: {})", t, granted.join(", "))));
+        }
+    }
+    // One wrapper routes by tool name: two servers can't both offer one.
+    for (other, entry) in servers.servers.iter().filter(|(n, _)| **n != a.name) {
+        let theirs = read_chain(&entry.token).ok().and_then(|c| c.first().and_then(|t| aat::inspect(t).ok())).and_then(|c| c.tools().ok().flatten()).unwrap_or_default();
+        if let Some(t) = granted.iter().find(|t| theirs.contains_key(*t)) {
+            return Err(fail(format!("{} already grants a tool named {}; pass --tool to leave it out here", other, t)));
         }
     }
 
@@ -1229,45 +1308,42 @@ async fn mcp_add(a: McpAdd) -> Result<()> {
     let root = aat::issue_root_with(&node_key::aat_signing_key(&node)?, &iss, &holder_jwk, tools, sandbox_entry(&grants), unix_now(), a.ttl, 3)
         .map_err(|e| fail(format!("Cannot issue token: {}", e)))?;
 
-    let token_path = match a.out {
-        Some(p) => p,
-        None => node_path.parent().map(|d| d.join("mcp").join(format!("{}.json", a.name))).ok_or_else(|| fail("No config directory; pass --out".into()))?,
-    };
-    if let Some(dir) = token_path.parent().filter(|d| !d.as_os_str().is_empty()) {
-        std::fs::create_dir_all(dir).map_err(|e| fail(format!("Cannot create {}: {}", dir.display(), e)))?;
-    }
+    let abs = |p: &std::path::Path| std::path::absolute(p).map_err(|e| fail(format!("{}: {}", p.display(), e)));
+    let token_path = abs(&dir.join(format!("{}.json", a.name)))?;
     std::fs::write(&token_path, serde_json::to_string_pretty(&ChainFile { chain: vec![root] })?)
         .map_err(|e| fail(format!("Cannot write {}: {}", token_path.display(), e)))?;
+    servers.servers.insert(a.name.clone(), ServerEntry { command: a.command.clone(), token: token_path.clone() });
+    std::fs::write(&servers_path, serde_json::to_string_pretty(&servers)?).map_err(|e| fail(format!("Cannot write {}: {}", servers_path.display(), e)))?;
 
-    let abs = |p: &std::path::Path| std::path::absolute(p).map(|p| p.display().to_string()).map_err(|e| fail(format!("{}: {}", p.display(), e)));
     let exe = std::env::current_exe().map_err(|e| fail(format!("Cannot find this binary: {}", e)))?;
-    let mut wrap = vec![exe.display().to_string(), "mcp".into(), "wrap".into(), "--token".into(), abs(&token_path)?];
-    if let Some(h) = &a.holder {
-        wrap.extend(["--holder".into(), abs(h)?]);
+    let mut wrap = vec![exe.display().to_string(), "mcp".into(), "wrap".into(), "--servers".into(), abs(&servers_path)?.display().to_string()];
+    for (flag, path) in [("--holder", &a.holder), ("--identity", &a.identity), ("--receipts", &a.receipts)] {
+        if let Some(p) = path {
+            wrap.extend([flag.to_string(), abs(p)?.display().to_string()]);
+        }
     }
-    if let Some(i) = &a.identity {
-        wrap.extend(["--identity".into(), abs(i)?]);
-    }
-    wrap.push("--".into());
-    wrap.extend(a.command.iter().cloned());
 
     eprintln!("Token for {}: {} ({} days)", a.name, token_path.display(), a.ttl / 86_400);
     for t in &granted {
         let flag = grants.get(t).map(|g| if g.taints { " (taints the agent)" } else if g.clean_only { " (refused once the agent is tainted)" } else { "" }).unwrap_or("");
         eprintln!("  grants {}{}", t, flag);
     }
-    eprintln!("Every call leaves a signed receipt: cleimesh audit verify. Run this again to renew the token.");
+    eprintln!(
+        "{} server(s) behind one wrapper ({}): one receipt log, one view of taint across them. Every call leaves a signed receipt (cleimesh audit verify).",
+        servers.servers.len(),
+        servers.servers.keys().cloned().collect::<Vec<_>>().join(", ")
+    );
 
     let claude = !a.print && std::process::Command::new("claude").arg("--version").stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success());
     if !claude {
         let line: Vec<String> = wrap.iter().map(|s| shell_quote(s)).collect();
-        println!("claude mcp add {} -- {}", a.name, line.join(" "));
-        println!("{}", serde_json::to_string(&serde_json::json!({ "mcpServers": { &a.name: { "command": &wrap[0], "args": &wrap[1..] } } }))?);
+        println!("claude mcp add {} -- {}", MCP_ENTRY, line.join(" "));
+        println!("{}", serde_json::to_string(&serde_json::json!({ "mcpServers": { MCP_ENTRY: { "command": &wrap[0], "args": &wrap[1..] } } }))?);
         return Ok(());
     }
-    let known = std::process::Command::new("claude").args(["mcp", "get", &a.name]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success());
+    let known = std::process::Command::new("claude").args(["mcp", "get", MCP_ENTRY]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success());
     if known {
-        eprintln!("{} is already registered with Claude Code; the token it reads was renewed. To change the command: claude mcp remove {}, then run this again", a.name, a.name);
+        eprintln!("{} is already registered with Claude Code and reads {}; restart the session to load {}.", MCP_ENTRY, servers_path.display(), a.name);
         return Ok(());
     }
     let mut add = std::process::Command::new("claude");
@@ -1275,12 +1351,12 @@ async fn mcp_add(a: McpAdd) -> Result<()> {
     if let Some(s) = &a.scope {
         add.args(["--scope", s]);
     }
-    add.arg(&a.name).arg("--").args(&wrap);
+    add.arg(MCP_ENTRY).arg("--").args(&wrap);
     let status = add.status().map_err(|e| fail(format!("Cannot run claude: {}", e)))?;
     if !status.success() {
         return Err(fail(format!("claude mcp add failed ({})", status)));
     }
-    eprintln!("Registered {} with Claude Code. Restart the session to load it.", a.name);
+    eprintln!("Registered {} with Claude Code. Restart the session to load it.", MCP_ENTRY);
     Ok(())
 }
 

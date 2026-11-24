@@ -182,14 +182,20 @@ Tested in throwaway containers with a scripted model in place of an LLM ([`tests
 
 ### Put an existing MCP server behind a token
 
-One command, no setup: it creates the keys if they're missing, asks the server for its tools, issues a token for exactly those, and registers the wrapped server with Claude Code:
+One command, no setup: it creates the keys if they're missing, asks the server for its tools, issues a token for exactly those, and registers it with Claude Code:
 
 ```sh
 # The fetch server, as the agent's only way to the web, tainting what it brings in
 cleimesh mcp add fetch --taints fetch -- uvx mcp-server-fetch
+# A filesystem server whose writes are refused once the agent read the web
+cleimesh mcp add fs --clean-only write_file --clean-only edit_file -- npx -y @modelcontextprotocol/server-filesystem ~/work
 ```
 
-`--tool` grants fewer tools than the server lists, `--clean-only` marks the ones that act on the world (refused once the agent is tainted), and `--print` prints the line plus a JSON entry for Cursor and other clients instead of calling `claude`. The token lasts 30 days; run the command again to renew it. The same thing by hand, with argument constraints:
+Every server you add runs behind one `cleimesh-mcp` entry: one node, one receipt log and one view of taint across all of them, so a page read through `fetch` blocks `write_file` on the filesystem server. `--tool` grants fewer tools than the server lists, and `--print` prints the line plus a JSON entry for Cursor and other clients instead of calling `claude`. Tokens last 30 days; run the command again to renew one. Calls to a wrapped server get 60 seconds unless the token says less.
+
+Tested in a container with the real `mcp-server-fetch` and `@modelcontextprotocol/server-filesystem` ([examples/mcp-add](examples/mcp-add/README.md)): the agent fetches a page carrying an injection, reads a secret, and its `write_file` of that secret is refused, with the refusal on a signed receipt.
+
+The same thing by hand, with argument constraints:
 
 ```sh
 cleimesh token issue <agent> --tool fetch --taints -o fetch.json

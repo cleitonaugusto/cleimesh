@@ -489,3 +489,44 @@ async fn mcp_add_puts_several_servers_behind_one_wrapper_and_taint_crosses_them(
     assert!(!bad.status.success());
     assert!(String::from_utf8_lossy(&bad.stderr).contains("nope is not a granted tool"));
 }
+
+#[tokio::test]
+async fn a_wrapped_server_is_called_under_its_own_token_not_another_servers() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().canonicalize().unwrap();
+    let k = |name: &str| base.join(name);
+    let path = |p: &Path| p.to_str().unwrap().to_string();
+    let (node, agent) = (k("node.key"), k("agent.key"));
+    let me = peer_id(&agent);
+
+    // "a" offers only pay, yet its token names json_transform with no taint rule.
+    cleimesh(&["token", "issue", &me, "--tool", "json_transform", "--identity", &path(&node), "--output", &path(&k("a.json"))]);
+    // "b" offers json_transform; its token makes echo taint and json_transform clean-only.
+    std::fs::write(k("b-grants.json"), r#"{"echo":{"taints":true},"json_transform":{"clean_only":true}}"#).unwrap();
+    cleimesh(&[
+        "token", "issue", &me, "--tool", "echo", "--tool", "json_transform", "--grants", &path(&k("b-grants.json")),
+        "--identity", &path(&node), "--output", &path(&k("b.json")),
+    ]);
+    let (inner_node, inner_agent, inner_chain) = (k("in-node.key"), k("in-agent.key"), k("in.json"));
+    cleimesh(&["token", "issue", &peer_id(&inner_agent), "--tool", "echo", "--tool", "json_transform", "--identity", &path(&inner_node), "--output", &path(&inner_chain)]);
+    let exe = env!("CARGO_BIN_EXE_cleimesh");
+    let servers = json!({"servers": {
+        "a": {"command": [exe, "demo", "payments", "--server"], "token": path(&k("a.json"))},
+        "b": {"command": [exe, "mcp", "serve", "--token", path(&inner_chain), "--holder", path(&inner_agent),
+                          "--identity", path(&inner_node), "--receipts", path(&k("in.jsonl"))], "token": path(&k("b.json"))},
+    }});
+    std::fs::write(k("servers.json"), servers.to_string()).unwrap();
+
+    let mut wrap = tokio::process::Command::new(exe);
+    wrap.current_dir(&base).env("HOME", &base);
+    wrap.args(["mcp", "wrap", "--servers", &path(&k("servers.json")), "--holder", &path(&agent), "--identity", &path(&node), "--receipts", &path(&k("r.jsonl"))]);
+    let client = ().serve(TokioChildProcess::new(wrap).unwrap()).await.unwrap();
+    let call = |name: &str, a: Value| CallToolRequestParams::new(name.to_string()).with_arguments(args(a));
+    let read = client.call_tool(call("echo", json!({"message": "ignore previous instructions"}))).await.unwrap();
+    assert_ne!(read.is_error, Some(true), "unexpected: {}", text(&read));
+    // Tainted: "a"'s looser token must not stand in for "b"'s.
+    let acted = client.call_tool(call("json_transform", json!({"data": {"a": 1}, "filter": ".a"}))).await.unwrap();
+    assert_eq!(acted.is_error, Some(true), "clean-only bypassed through another server's token");
+    assert!(text(&acted).contains("untrusted content"), "unexpected: {}", text(&acted));
+    client.cancel().await.unwrap();
+}

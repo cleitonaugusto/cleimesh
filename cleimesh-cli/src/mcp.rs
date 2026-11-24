@@ -269,7 +269,12 @@ impl ServerHandler for Wrapper {
         let call_context = call_context(Some(&context.meta.0 .0)).or_else(|| call_context(request.meta.as_ref().map(|m| &m.0 .0)));
         let arguments = request.arguments.clone();
         let args = serde_json::Value::Object(arguments.clone().unwrap_or_default());
-        let presentation = match present(self.credentials.as_ref(), &self.audience, &tool, &args) {
+        let route = self.route.get(&tool).map(|i| &self.backends[*i]);
+        // A server listed with its own token is called under that token only:
+        // another server's chain granting the same name must not stand in for
+        // it, with different constraints or taint flags.
+        let own = route.and_then(|b| b.chain).and_then(|i| self.credentials.as_ref().map(|(chains, key)| (chains.get(i..=i).map(<[_]>::to_vec).unwrap_or_default(), key.clone())));
+        let presentation = match present(own.as_ref().or(self.credentials.as_ref()), &self.audience, &tool, &args) {
             Ok(p) => p,
             Err(e) => return Ok(error_result(format!("cannot present the token: {}", e))),
         };
@@ -281,7 +286,7 @@ impl ServerHandler for Wrapper {
             presentation,
             context: call_context,
         };
-        let Some(backend) = self.route.get(&tool).map(|i| &self.backends[*i]) else {
+        let Some(backend) = route else {
             return Ok(error_result(format!("no wrapped server offers {}", tool)));
         };
         let server = &backend.server;

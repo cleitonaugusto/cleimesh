@@ -369,7 +369,15 @@ pub fn is_public(ip: IpAddr) -> bool {
                 let o = v6.octets();
                 return is_public_v4(Ipv4Addr::new(o[12], o[13], o[14], o[15]));
             }
+            // 6to4 carries an IPv4 address in bits 16..48.
+            if s[0] == 0x2002 {
+                let o = v6.octets();
+                return is_public_v4(Ipv4Addr::new(o[2], o[3], o[4], o[5]));
+            }
             !(v6.is_unspecified()
+                || (s[0] == 0x64 && s[1] == 0xff9b && s[2] == 1) // local-use NAT64 (RFC 8215)
+                || (s[0] == 0x2001 && s[1] == 0) // Teredo
+                || (s[0] & 0xffc0) == 0xfec0 // site-local, deprecated
                 || v6.is_loopback()
                 || v6.is_multicast()
                 || (s[0] & 0xfe00) == 0xfc00 // unique local
@@ -402,6 +410,16 @@ fn is_public_v4(v4: Ipv4Addr) -> bool {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn ipv6_forms_that_carry_or_reach_a_private_address_are_not_public() {
+        for ip in ["2002:7f00:1::1", "2002:a9fe:a9fe::", "2002:0a00:0001::", "64:ff9b:1::a00:1", "2001:0:4136:e378::1", "fec0::1", "fd00:ec2::254", "::ffff:169.254.169.254"] {
+            assert!(!is_public(ip.parse().unwrap()), "{ip} counted as public");
+        }
+        for ip in ["2002:0808:0808::1", "2606:4700:4700::1111", "64:ff9b::808:808"] {
+            assert!(is_public(ip.parse().unwrap()), "{ip} counted as private");
+        }
+    }
 
     fn fixed(ip: &str) -> Resolver {
         let ip: IpAddr = ip.parse().unwrap();

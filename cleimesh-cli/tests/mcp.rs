@@ -461,7 +461,7 @@ async fn mcp_add_puts_several_servers_behind_one_wrapper_and_taint_crosses_them(
     let printed = String::from_utf8(out.stdout).unwrap();
     let mut lines = printed.lines();
     let line = lines.next().unwrap();
-    assert!(line.starts_with("claude mcp add cleimesh-mcp -- ") && line.contains(" mcp wrap --servers "), "unexpected: {line}");
+    assert!(line.starts_with("claude mcp add --scope user cleimesh-mcp -- ") && line.contains(" mcp wrap --servers "), "unexpected: {line}");
     let entry: Value = serde_json::from_str(lines.next().unwrap()).unwrap();
 
     // One client entry, both servers, one view of taint.

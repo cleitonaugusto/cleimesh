@@ -328,9 +328,10 @@ enum McpCommands {
         /// Token lifetime in seconds (default 30 days)
         #[arg(long, default_value = "2592000")]
         ttl: i64,
-        /// Claude Code scope: local, user or project
-        #[arg(long)]
-        scope: Option<String>,
+        /// Claude Code scope: user (every project, the default), local (this
+        /// directory only) or project (.mcp.json, shared)
+        #[arg(long, default_value = "user")]
+        scope: String,
         /// Print the command, and a JSON entry for other clients (Cursor,
         /// Windsurf...), instead of running `claude mcp add`
         #[arg(long)]
@@ -1232,7 +1233,7 @@ struct McpAdd {
     taints: Vec<String>,
     clean_only: Vec<String>,
     ttl: i64,
-    scope: Option<String>,
+    scope: String,
     print: bool,
     dir: Option<PathBuf>,
     holder: Option<PathBuf>,
@@ -1369,26 +1370,23 @@ async fn mcp_add(a: McpAdd) -> Result<()> {
     let claude = !a.print && std::process::Command::new("claude").arg("--version").stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success());
     if !claude {
         let line: Vec<String> = wrap.iter().map(|s| shell_quote(s)).collect();
-        println!("claude mcp add {} -- {}", MCP_ENTRY, line.join(" "));
+        println!("claude mcp add --scope {} {} -- {}", a.scope, MCP_ENTRY, line.join(" "));
         println!("{}", serde_json::to_string(&serde_json::json!({ "mcpServers": { MCP_ENTRY: { "command": &wrap[0], "args": &wrap[1..] } } }))?);
         return Ok(());
     }
-    let known = std::process::Command::new("claude").args(["mcp", "get", MCP_ENTRY]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success());
+    let known = std::process::Command::new("claude").args(["mcp", "get", MCP_ENTRY]).current_dir(std::env::temp_dir()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success());
     if known {
         eprintln!("{} is already registered with Claude Code and reads {}; restart the session to load {}.", MCP_ENTRY, servers_path.display(), a.name);
         return Ok(());
     }
     let mut add = std::process::Command::new("claude");
-    add.args(["mcp", "add"]);
-    if let Some(s) = &a.scope {
-        add.args(["--scope", s]);
-    }
+    add.args(["mcp", "add", "--scope", &a.scope]);
     add.arg(MCP_ENTRY).arg("--").args(&wrap);
     let status = add.status().map_err(|e| fail(format!("Cannot run claude: {}", e)))?;
     if !status.success() {
         return Err(fail(format!("claude mcp add failed ({})", status)));
     }
-    eprintln!("Registered {} with Claude Code. Restart the session to load it.", MCP_ENTRY);
+    eprintln!("Registered {} with Claude Code ({} scope). Restart the session to load it.", MCP_ENTRY, a.scope);
     Ok(())
 }
 

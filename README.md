@@ -194,7 +194,7 @@ Tested in throwaway containers with a scripted model in place of an LLM ([`tests
 
 ### Put an existing MCP server behind a token
 
-One command, no setup: it creates the keys if they're missing, asks the server for its tools, issues a token for exactly those, and registers it with Claude Code:
+One command, no setup: it creates the keys if they're missing, asks the server for its tools, issues a token for exactly those, and registers it with Claude Code for every project (`--scope local` keeps it to one directory):
 
 ```sh
 # The fetch server, as the agent's only way to the web, tainting what it brings in

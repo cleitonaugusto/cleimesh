@@ -155,7 +155,7 @@ Testado em containers descartáveis com um modelo roteirizado no lugar de um LLM
 
 ### Pôr um servidor MCP existente atrás de um token
 
-Um comando, sem configurar nada: ele cria as chaves se faltarem, pergunta ao servidor quais ferramentas ele tem, emite um token só para elas e registra no Claude Code:
+Um comando, sem configurar nada: ele cria as chaves se faltarem, pergunta ao servidor quais ferramentas ele tem, emite um token só para elas e registra no Claude Code para todos os projetos (`--scope local` restringe a uma pasta):
 
 ```sh
 # O servidor fetch como único caminho do agente para a web, contaminando o que ele traz

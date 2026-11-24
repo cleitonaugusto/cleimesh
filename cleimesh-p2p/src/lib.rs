@@ -102,6 +102,9 @@ type Execution = (PeerId, ResponseChannel<ToolResponse>, ToolResponse, receipts:
 
 /// How long an inbound tool run may take.
 const EXECUTION_TIMEOUT_MS: u64 = 5000;
+/// The time limit for a call to a native MCP server (`cleimesh mcp wrap`,
+/// M5), which may fetch pages or wait on remote APIs; a token may lower it.
+const EXTERNAL_TIMEOUT_MS: u64 = 60_000;
 /// How long a request may take on the wire, from the request to its
 /// response: the longest run plus room for the queue and the network (S11).
 const REQUEST_TIMEOUT: Duration = Duration::from_millis(EXECUTION_TIMEOUT_MS + 5000);
@@ -471,19 +474,20 @@ impl CleiMeshNode {
     /// `P2PConfig::public_tools`. Records usage on success, and returns what
     /// allowed the call, for its receipt.
     pub fn authorize_tool_request(&mut self, peer: &PeerId, request: &ToolRequest) -> std::result::Result<Authority, String> {
-        self.authorize(peer, request).map(|(authority, _)| authority)
+        self.authorize(peer, request, EXECUTION_TIMEOUT_MS).map(|(authority, _)| authority)
     }
 
     /// `authorize_tool_request`, plus the sandbox the call must run in: the
     /// grants of its AAT chain (see `grants`), or the node's own sandbox for
-    /// a legacy capability or a public tool.
-    fn authorize(&mut self, peer: &PeerId, request: &ToolRequest) -> std::result::Result<(Authority, SandboxConfig), String> {
+    /// a legacy capability or a public tool. A chain's time limit is capped
+    /// at `max_timeout_ms`.
+    fn authorize(&mut self, peer: &PeerId, request: &ToolRequest, max_timeout_ms: u64) -> std::result::Result<(Authority, SandboxConfig), String> {
         if let Some(presentation) = &request.presentation {
             if request.capability.is_some() {
                 return Err("Authorization failed: request carries both a capability and an AAT presentation".to_string());
             }
             return self
-                .authorize_presentation(presentation, &request.tool_name, &request.payload)
+                .authorize_presentation(presentation, &request.tool_name, &request.payload, max_timeout_ms)
                 .map_err(|e| format!("Authorization failed: {}", e));
         }
 
@@ -530,7 +534,7 @@ impl CleiMeshNode {
     /// this node's key, proof of possession addressed to this node and not
     /// seen before. The proof binds the leaf holder's key, not the PeerId
     /// that carried the request, so any transport peer may relay it.
-    fn authorize_presentation(&mut self, presentation: &aat::Presentation, tool: &str, args: &serde_json::Value) -> std::result::Result<(Authority, SandboxConfig), String> {
+    fn authorize_presentation(&mut self, presentation: &aat::Presentation, tool: &str, args: &serde_json::Value, max_timeout_ms: u64) -> std::result::Result<(Authority, SandboxConfig), String> {
         let now = unix_now();
         let anchors = [aat::TrustAnchor::new(format!("urn:cleimesh:node:{}", self.local_peer_id), self.aat_trust_anchor())];
         let audience = self.aat_audience();
@@ -549,7 +553,7 @@ impl CleiMeshNode {
                 ));
             }
         }
-        let sandbox = grants::sandbox_config(self.sandbox.config(), &grant, &root_grant, EXECUTION_TIMEOUT_MS)?;
+        let sandbox = grants::sandbox_config(self.sandbox.config(), &grant, &root_grant, max_timeout_ms)?;
         self.replay_guard.check(&verified, now).map_err(|e| e.to_string())?;
         let authority = Authority::Aat {
             root_iss: verified.root.iss,
@@ -818,7 +822,7 @@ impl CleiMeshNode {
         let authorized = if purpose_chars > receipts::MAX_PURPOSE_CHARS {
             Err(format!("purpose longer than {} characters", receipts::MAX_PURPOSE_CHARS))
         } else {
-            self.authorize(peer, request)
+            self.authorize(peer, request, if external.is_some() { EXTERNAL_TIMEOUT_MS } else { EXECUTION_TIMEOUT_MS })
         };
         let authorized = authorized.and_then(|(authority, sandbox)| match external.and(unenforceable_grants(request)) {
             Some(granted) => Err(format!(

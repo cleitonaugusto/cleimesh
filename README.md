@@ -203,7 +203,7 @@ cleimesh mcp add fetch --taints fetch -- uvx mcp-server-fetch
 cleimesh mcp add fs --clean-only write_file --clean-only edit_file -- npx -y @modelcontextprotocol/server-filesystem ~/work
 ```
 
-Every server you add runs behind one `cleimesh-mcp` entry: one node, one receipt log and one view of taint across all of them, so a page read through `fetch` blocks `write_file` on the filesystem server. `--tool` grants fewer tools than the server lists, and `--print` prints the line plus a JSON entry for Cursor and other clients instead of calling `claude`. Tokens last 30 days; run the command again to renew one. Calls to a wrapped server get 60 seconds unless the token says less.
+Every server you add runs behind one `cleimesh-mcp` entry: one node, one receipt log and one view of taint across all of them, so a page read through `fetch` blocks `write_file` on the filesystem server. `mcp add` also pins each tool's definition: if the server later changes a tool's description or schema, the wrapper stops offering it until you run `mcp add` again. `--tool` grants fewer tools than the server lists, and `--print` prints the line plus a JSON entry for Cursor and other clients instead of calling `claude`. Tokens last 30 days; run the command again to renew one. Calls to a wrapped server get 60 seconds unless the token says less.
 
 Tested in a container with the real `mcp-server-fetch` and `@modelcontextprotocol/server-filesystem` ([examples/mcp-add](examples/mcp-add/README.md)): the agent fetches a page carrying an injection, reads a secret, and its `write_file` of that secret is refused, with the refusal on a signed receipt.
 

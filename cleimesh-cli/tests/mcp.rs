@@ -530,3 +530,47 @@ async fn a_wrapped_server_is_called_under_its_own_token_not_another_servers() {
     assert!(text(&acted).contains("untrusted content"), "unexpected: {}", text(&acted));
     client.cancel().await.unwrap();
 }
+
+#[tokio::test]
+async fn a_tool_whose_definition_changed_since_mcp_add_is_not_offered() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().canonicalize().unwrap();
+    let k = |name: &str| base.join(name);
+    let path = |p: &Path| p.to_str().unwrap().to_string();
+    let (inner_node, inner_agent, inner_chain) = (k("in-node.key"), k("in-agent.key"), k("in.json"));
+    cleimesh(&["token", "issue", &peer_id(&inner_agent), "--tool", "echo", "--tool", "json_transform", "--identity", &path(&inner_node), "--output", &path(&inner_chain)]);
+    let (node, agent, conf) = (k("node.key"), k("agent.key"), k("mcp"));
+    let exe = env!("CARGO_BIN_EXE_cleimesh");
+    cleimesh(&[
+        "mcp", "add", "srv", "--print", "--tool", "echo", "--tool", "json_transform", "--dir", &path(&conf),
+        "--holder", &path(&agent), "--identity", &path(&node), "--receipts", &path(&k("r.jsonl")), "--",
+        exe, "mcp", "serve", "--token", &path(&inner_chain), "--holder", &path(&inner_agent), "--identity", &path(&inner_node), "--receipts", &path(&k("in.jsonl")),
+    ]);
+    // A tool not listed by the server can't be granted.
+    let out = Command::new(exe)
+        .args(["mcp", "add", "srv2", "--print", "--tool", "nope", "--dir", &path(&conf), "--holder", &path(&agent), "--identity", &path(&node), "--"])
+        .args([exe, "mcp", "serve", "--token", &path(&inner_chain), "--holder", &path(&inner_agent), "--identity", &path(&inner_node), "--receipts", &path(&k("in2.jsonl"))])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("does not list a tool named nope"), "{}", String::from_utf8_lossy(&out.stderr));
+
+    // The server "changes" echo after it was added: its pin no longer matches.
+    let servers_path = conf.join("servers.json");
+    let mut servers: Value = serde_json::from_str(&std::fs::read_to_string(&servers_path).unwrap()).unwrap();
+    assert_eq!(servers["servers"]["srv"]["pins"].as_object().unwrap().len(), 2);
+    servers["servers"]["srv"]["pins"]["echo"] = json!("0".repeat(64));
+    std::fs::write(&servers_path, servers.to_string()).unwrap();
+
+    let mut wrap = tokio::process::Command::new(exe);
+    wrap.args(["mcp", "wrap", "--servers", &path(&servers_path), "--holder", &path(&agent), "--identity", &path(&node), "--receipts", &path(&k("r.jsonl"))]);
+    wrap.stderr(std::process::Stdio::piped());
+    let (transport, stderr) = TokioChildProcess::builder(wrap).stderr(std::process::Stdio::piped()).spawn().unwrap();
+    let client = ().serve(transport).await.unwrap();
+    let tools: Vec<String> = client.list_all_tools().await.unwrap().iter().map(|t| t.name.to_string()).collect();
+    assert_eq!(tools, ["json_transform"], "a changed tool was offered");
+    client.cancel().await.unwrap();
+    let mut said = String::new();
+    tokio::io::AsyncReadExt::read_to_string(&mut stderr.unwrap(), &mut said).await.unwrap();
+    assert!(said.contains("echo of srv changed since it was added"), "{said}");
+}

@@ -10,6 +10,7 @@ name = "cleimesh"
 path = "src/main.rs"
 
 [dependencies]
+serde_json_canonicalizer = "0.3"
 cleimesh-core = { path = "../cleimesh-core" }
 cleimesh-wasm-sandbox = { path = "../cleimesh-wasm-sandbox" }
 cleimesh-p2p = { path = "../cleimesh-p2p" }

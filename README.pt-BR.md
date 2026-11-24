@@ -163,7 +163,7 @@ cleimesh mcp add fetch --taints fetch -- uvx mcp-server-fetch
 cleimesh mcp add fs --clean-only write_file --clean-only edit_file -- npx -y @modelcontextprotocol/server-filesystem ~/trabalho
 ```
 
-Todo servidor adicionado roda atrás de uma única entrada `cleimesh-mcp`: um nó, um log de recibos e uma visão só da contaminação para todos eles, então uma página lida pelo `fetch` barra o `write_file` do servidor de arquivos. `--tool` concede menos ferramentas do que o servidor lista, e `--print` imprime a linha e uma entrada JSON para o Cursor e outros clientes em vez de chamar o `claude`. Os tokens valem 30 dias; rode o comando de novo para renovar. Chamadas a um servidor embrulhado têm 60 segundos, a menos que o token diga menos.
+Todo servidor adicionado roda atrás de uma única entrada `cleimesh-mcp`: um nó, um log de recibos e uma visão só da contaminação para todos eles, então uma página lida pelo `fetch` barra o `write_file` do servidor de arquivos. O `mcp add` também fixa a definição de cada ferramenta: se o servidor mudar depois a descrição ou o schema de uma ferramenta, o wrapper deixa de oferecê-la até você rodar o `mcp add` de novo. `--tool` concede menos ferramentas do que o servidor lista, e `--print` imprime a linha e uma entrada JSON para o Cursor e outros clientes em vez de chamar o `claude`. Os tokens valem 30 dias; rode o comando de novo para renovar. Chamadas a um servidor embrulhado têm 60 segundos, a menos que o token diga menos.
 
 Testado num container com o `mcp-server-fetch` e o `@modelcontextprotocol/server-filesystem` oficiais ([examples/mcp-add](examples/mcp-add/README.md), em inglês): o agente busca uma página com uma injeção, lê um segredo, e o `write_file` desse segredo é recusado, com a recusa num recibo assinado.
 

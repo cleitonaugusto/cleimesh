@@ -75,6 +75,18 @@ impl Gateway {
     }
 }
 
+/// The digest of a tool's definition as the model sees it (name, title,
+/// description, schemas, annotations), to notice a server changing a tool
+/// after it was approved. Icons and `_meta` are left out.
+pub fn tool_pin(tool: &Tool) -> String {
+    let mut value = serde_json::to_value(tool).unwrap_or_default();
+    if let Some(object) = value.as_object_mut() {
+        object.remove("icons");
+        object.remove("_meta");
+    }
+    cleimesh_receipt::sha256_hex(&serde_json_canonicalizer::to_vec(&value).unwrap_or_default())
+}
+
 /// The tools a chain's leaf grants (read unverified: the node verifies).
 fn granted_tools(chain: &[String]) -> Vec<String> {
     chain.last().and_then(|leaf| aat::inspect(leaf).ok()).and_then(|c| c.tools().ok().flatten()).map(|t| t.keys().cloned().collect()).unwrap_or_default()
@@ -222,6 +234,9 @@ pub struct Wrapped {
     /// only the tools it grants are taken from this server. `None`: any held
     /// chain.
     pub chain: Option<usize>,
+    /// Each tool's definition digest when it was added (`tool_pin`): a tool
+    /// whose definition changed since is not offered. `None`: not pinned.
+    pub pins: Option<std::collections::BTreeMap<String, String>>,
 }
 
 impl Wrapper {
@@ -239,6 +254,17 @@ impl Wrapper {
             };
             let offered = backend.server.list_all_tools().await.map_err(|e| format!("cannot list the tools of {}: {}", backend.name, e))?;
             for tool in offered.into_iter().filter(|t| granted.iter().any(|g| *g == t.name)) {
+                if let Some(pins) = &backend.pins {
+                    let now = tool_pin(&tool);
+                    if pins.get(tool.name.as_ref()) != Some(&now) {
+                        eprintln!(
+                            "cleimesh mcp wrap: {} of {} changed since it was added (definition sha256 {}), so it is not offered; \
+                             review it and run `cleimesh mcp add {}` again to accept it",
+                            tool.name, backend.name, &now[..12], backend.name
+                        );
+                        continue;
+                    }
+                }
                 if let Some(j) = route.insert(tool.name.to_string(), i) {
                     return Err(format!("tool {} is offered by both {} and {}; grant it from one of them only", tool.name, backends[j].name, backend.name));
                 }

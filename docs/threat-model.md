@@ -149,7 +149,10 @@ granted directory, file names never. Tests: `cleimesh-p2p/tests/report.rs`,
 - **What a wrapped server says about its tools.** Tool names, descriptions
   and schemas from a server behind `mcp wrap` reach the agent as the server
   wrote them. The token limits which tools and arguments get through, not
-  what their descriptions tell the model.
+  what their descriptions tell the model. `cleimesh mcp add` pins each
+  granted tool's definition, and the wrapper stops offering a tool whose
+  definition changed since (a "rug pull") until a human adds it again; a
+  description that was already hostile when it was added still gets through.
 - **Taint across nodes.** Each node keeps its own view. The same token used
   on two nodes, or on two `mcp serve` or `mcp wrap` processes with different
   logs, is tainted separately. Servers added with `cleimesh mcp add` run

@@ -1146,10 +1146,13 @@ struct ServerEntry {
     command: Vec<String>,
     /// Its token chain file.
     token: PathBuf,
+    /// Each granted tool's definition digest when added (see `mcp::tool_pin`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pins: Option<std::collections::BTreeMap<String, String>>,
 }
 
 /// Start one MCP server to wrap, as a client of it.
-async fn start_backend(name: &str, command: &[String], chain: Option<usize>) -> Result<mcp::Wrapped> {
+async fn start_backend(name: &str, command: &[String], chain: Option<usize>, pins: Option<std::collections::BTreeMap<String, String>>) -> Result<mcp::Wrapped> {
     use rmcp::ServiceExt;
     eprintln!(
         "cleimesh mcp wrap: {} ({}) is not sandboxed; the token limits which of its tools and arguments get through, \
@@ -1162,7 +1165,7 @@ async fn start_backend(name: &str, command: &[String], chain: Option<usize>) -> 
     let server = ().serve(transport).await.map_err(|e| anyhow::anyhow!("{} did not start as an MCP server: {}", command[0], e))?;
     // The command line may carry secrets (API keys); receipts keep its digest.
     let server_sha256 = cleimesh_receipt::sha256_hex(serde_json::to_string(command).unwrap_or_default().as_bytes());
-    Ok(mcp::Wrapped { name: name.to_string(), server, server_sha256, chain })
+    Ok(mcp::Wrapped { name: name.to_string(), server, server_sha256, chain, pins })
 }
 
 async fn mcp_wrap(
@@ -1193,11 +1196,11 @@ async fn mcp_wrap(
             }
             let mut backends = Vec::new();
             for (i, (name, entry)) in file.servers.iter().enumerate() {
-                backends.push(start_backend(name, &entry.command, Some(i)).await?);
+                backends.push(start_backend(name, &entry.command, Some(i), entry.pins.clone()).await?);
             }
             (file.servers.into_values().map(|e| e.token).collect::<Vec<_>>(), backends)
         }
-        None => (tokens, vec![start_backend(&command[0], &command, None).await?]),
+        None => (tokens, vec![start_backend(&command[0], &command, None, None).await?]),
     };
     let credentials = if tokens.is_empty() {
         eprintln!("cleimesh mcp wrap: no --token, no tool of the wrapped server is offered");
@@ -1264,17 +1267,27 @@ async fn mcp_add(a: McpAdd) -> Result<()> {
         Err(e) => return Err(fail(format!("Cannot read {}: {}", servers_path.display(), e))),
     };
 
-    let granted: Vec<String> = if a.tools.is_empty() {
+    // The server's tools as it describes them now: what is granted, and the
+    // definitions pinned, so a later change is noticed.
+    let listed = {
         let mut child = tokio::process::Command::new(&a.command[0]);
         child.args(&a.command[1..]).stderr(std::process::Stdio::null());
         let transport = rmcp::transport::TokioChildProcess::new(child).map_err(|e| fail(format!("Cannot start {}: {}", a.command[0], e)))?;
         let server = ().serve(transport).await.map_err(|e| fail(format!("{} did not start as an MCP server: {}", a.command[0], e)))?;
         let listed = server.list_all_tools().await.map_err(|e| fail(format!("Cannot list the tools of {}: {}", a.command[0], e)));
         let _ = server.cancel().await;
-        listed?.into_iter().map(|t| t.name.to_string()).collect()
+        listed?
+    };
+    let granted: Vec<String> = if a.tools.is_empty() {
+        listed.iter().map(|t| t.name.to_string()).collect()
     } else {
+        if let Some(t) = a.tools.iter().find(|t| !listed.iter().any(|l| l.name == t.as_str())) {
+            return Err(fail(format!("{} does not list a tool named {}", a.command[0], t)));
+        }
         a.tools.clone()
     };
+    let pins: std::collections::BTreeMap<String, String> =
+        listed.iter().filter(|t| granted.iter().any(|g| *g == t.name)).map(|t| (t.name.to_string(), mcp::tool_pin(t))).collect();
     if granted.is_empty() {
         return Err(fail(format!("{} lists no tools; nothing to grant", a.command[0])));
     }
@@ -1313,7 +1326,7 @@ async fn mcp_add(a: McpAdd) -> Result<()> {
     let token_path = abs(&dir.join(format!("{}.json", a.name)))?;
     std::fs::write(&token_path, serde_json::to_string_pretty(&ChainFile { chain: vec![root] })?)
         .map_err(|e| fail(format!("Cannot write {}: {}", token_path.display(), e)))?;
-    servers.servers.insert(a.name.clone(), ServerEntry { command: a.command.clone(), token: token_path.clone() });
+    servers.servers.insert(a.name.clone(), ServerEntry { command: a.command.clone(), token: token_path.clone(), pins: Some(pins) });
     std::fs::write(&servers_path, serde_json::to_string_pretty(&servers)?).map_err(|e| fail(format!("Cannot write {}: {}", servers_path.display(), e)))?;
 
     let exe = std::env::current_exe().map_err(|e| fail(format!("Cannot find this binary: {}", e)))?;

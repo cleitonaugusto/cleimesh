@@ -9,7 +9,8 @@
 [![Licença: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#licença)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23547249.svg)](https://doi.org/10.5281/zenodo.23547249)
 
-> **Permissões assinadas para agentes de IA que o sandbox realmente aplica, e recibos que qualquer um pode reexecutar para conferir.**
+> **O que o seu agente lê não decide o que ele faz.**
+> Limites assinados em cada chamada de tool MCP, aplicados fora do modelo, com um recibo para cada uma.
 
 *[Read in English](README.md)*
 

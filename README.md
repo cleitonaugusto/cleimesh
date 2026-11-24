@@ -9,8 +9,8 @@
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23547249.svg)](https://doi.org/10.5281/zenodo.23547249)
 
-> **Give your agent an allowance. Get a receipt.**
-> A bounded, provable budget — enforced outside the agent, on any tool.
+> **What your agent reads can't decide what it does.**
+> Signed limits on every MCP tool call, enforced outside the model, with a receipt for each one.
 
 *[Leia em português](README.pt-BR.md)*
 

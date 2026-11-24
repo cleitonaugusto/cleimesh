@@ -225,9 +225,6 @@ enum AllowanceCommands {
         /// Where to write the signed allowance.
         #[arg(long, value_name = "FILE")]
         out: PathBuf,
-        /// The owner's URI, recorded as the token issuer.
-        #[arg(long, default_value = "urn:cleimesh:owner")]
-        iss: String,
     },
 }
 
@@ -724,8 +721,8 @@ async fn run(cli: Cli) -> Result<()> {
         }
         Commands::Allowance(cmd) => match cmd {
             AllowanceCommands::Keygen { out } => allowance::keygen(&out)?,
-            AllowanceCommands::Grant { max, tool, to, calls, ttl, owner, agent, out, iss } => {
-                allowance::grant(max, tool, to, calls, ttl, owner, agent, out, iss)?
+            AllowanceCommands::Grant { max, tool, to, calls, ttl, owner, agent, out } => {
+                allowance::grant(max, tool, to, calls, ttl, owner, agent, out)?
             }
         },
         Commands::Taint(cmd) => taint(cmd)?,

@@ -35,7 +35,7 @@ fn main() {
     }
     println!("    [sign? y]  ->  allowance.json written, signed.\n");
 
-    let token = issue(&owner, "urn:owner:you", &env, NOW).expect("the owner signs the allowance");
+    let token = issue(&owner, &env, NOW).expect("the owner signs the allowance");
 
     println!("$ cleimesh mcp wrap --allowance allowance.json --owner owner.pub.json --agent agent.key -- demo-pay-server");
     println!("  the agent now acts on its own; cleimesh enforces the allowance from outside it.\n");

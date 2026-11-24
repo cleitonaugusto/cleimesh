@@ -42,7 +42,7 @@ let agent = SigningKey::from_bytes(&[2u8; 32]);
 
 // you sign an allowance, once
 let env = Envelope::new(Jwk::from_key(&agent.verifying_key()), "pay", "demo", 5.0, 5, 3600);
-let token = issue(&owner, "urn:owner:you", &env, now).unwrap();
+let token = issue(&owner, &env, now).unwrap();
 
 // the agent acts alone; the host admits only inside the allowance
 let mut ledger = Ledger::new();

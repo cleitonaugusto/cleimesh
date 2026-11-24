@@ -19,7 +19,7 @@
 //!
 //! // You sign an allowance: pay "demo", up to $5, 5 calls, for an hour.
 //! let env = Envelope::new(Jwk::from_key(&agent.verifying_key()), "pay", "demo", 5.0, 5, 3600);
-//! let token = issue(&owner, "urn:owner:you", &env, now).unwrap();
+//! let token = issue(&owner, &env, now).unwrap();
 //!
 //! // The agent then acts alone; the host admits only inside the allowance.
 //! let mut ledger = Ledger::new();
@@ -134,13 +134,15 @@ impl std::error::Error for Refusal {}
 
 /// Sign and issue the allowance. The owner's key signs an AAT root for the
 /// holder: the per-call limits as argument constraints, the cumulative cap and
-/// call count in a signed `cleimesh_allowance` entry.
-pub fn issue(owner: &SigningKey, iss: &str, env: &Envelope, now: i64) -> Result<String, Refusal> {
+/// call count in a signed `cleimesh_allowance` entry. The root's `iss` is the
+/// owner key's RFC 9278 thumbprint URI, the name [`admit`] checks it against.
+pub fn issue(owner: &SigningKey, env: &Envelope, now: i64) -> Result<String, Refusal> {
     if !env.amount_max.is_finite() || env.amount_max < 0.0 {
         return Err(Refusal::BadAllowance("amount_max must be finite and non-negative".into()));
     }
     let entry = json!({ "type": ALLOWANCE_TYPE, "v": ALLOWANCE_VERSION, "calls": env.calls, "cap": env.amount_max });
-    aat::issue_root_with(owner, iss, &env.holder, env.tools(), vec![entry], now, env.ttl_secs, 0)
+    let iss = Jwk::from_key(&owner.verifying_key()).thumbprint_uri();
+    aat::issue_root_with(owner, &iss, &env.holder, env.tools(), vec![entry], now, env.ttl_secs, 0)
         .map_err(|e| Refusal::BadAllowance(e.0))
 }
 
@@ -211,7 +213,7 @@ fn read_entry(root: &Claims) -> Result<Entry, Refusal> {
 }
 
 /// Admit a call made under an allowance. `owner` is the key that signed it and
-/// the only trust anchor. The AAT check enforces the tool, payee and per-call
+/// the only trust anchor; the root's `iss` must be that key's thumbprint URI. The AAT check enforces the tool, payee and per-call
 /// amount; the ledger enforces the call count and the cumulative cap. On
 /// success the call is recorded and returned as an [`Admitted`].
 pub fn admit(
@@ -222,7 +224,7 @@ pub fn admit(
     now: i64,
     ledger: &mut Ledger,
 ) -> Result<Admitted, Refusal> {
-    let anchors = [aat::TrustAnchor::key_only(owner.clone())];
+    let anchors = [aat::TrustAnchor::for_key(owner.clone())];
     let policy = Policy::new(&anchors, now);
     let verified = aat::verify(presentation, &policy, tool, args).map_err(|e| Refusal::NotAllowed(e.0))?;
 
@@ -271,7 +273,7 @@ mod tests {
         Envelope::new(jwk(&agent()), "pay", "demo", 5.0, 3, 3600)
     }
     fn token() -> String {
-        issue(&owner(), "urn:owner:you", &env(), NOW).unwrap()
+        issue(&owner(), &env(), NOW).unwrap()
     }
     fn call(token: &str, to: &str, amount: f64, led: &mut Ledger) -> Result<Admitted, Refusal> {
         let args = json!({ "to": to, "amount": amount });
@@ -288,6 +290,18 @@ mod tests {
         let jti = aat::inspect(&t).unwrap().jti;
         assert_eq!(a.allowance(), jti);
         assert_eq!(led.usage(&jti), (1, 2.0));
+    }
+
+    #[test]
+    fn refuses_a_root_whose_iss_is_not_the_owner_key() {
+        // Signed by the owner's key but naming another issuer (step 3k).
+        let entry = json!({ "type": ALLOWANCE_TYPE, "v": ALLOWANCE_VERSION, "calls": 3, "cap": 5.0 });
+        let e = env();
+        let t = aat::issue_root_with(&owner(), "urn:owner:someone-else", &e.holder, e.tools(), vec![entry], NOW, 3600, 0).unwrap();
+        match call(&t, "demo", 1.0, &mut Ledger::new()) {
+            Err(Refusal::NotAllowed(m)) => assert!(m.contains("trust anchor's issuer"), "{m}"),
+            other => panic!("expected a 3k refusal, got {other:?}"),
+        }
     }
 
     #[test]

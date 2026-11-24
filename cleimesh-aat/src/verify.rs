@@ -13,23 +13,24 @@ use crate::token::{is_uri, reject_duplicate_keys, Claims, PopClaims, Presentatio
 use crate::{deny, Result, MAX_DELEGATION_DEPTH, MAX_IAT_SKEW, MAX_STACK_SIZE, MAX_TOKEN_LIFETIME, MAX_TOKEN_SIZE, POP_IAT_TOLERANCE};
 
 /// A root issuer the enforcement point trusts: its key and the `iss` its
-/// root tokens must carry (step 3k). `iss: None` accepts any URI `iss`
-/// under the key, for a deployment where the key alone names the issuer
-/// (a single owner signing its own allowances); it skips step 3k.
+/// root tokens must carry (step 3k).
 #[derive(Debug, Clone)]
 pub struct TrustAnchor {
-    pub iss: Option<String>,
+    pub iss: String,
     pub jwk: Jwk,
 }
 
 impl TrustAnchor {
     pub fn new(iss: impl Into<String>, jwk: Jwk) -> Self {
-        TrustAnchor { iss: Some(iss.into()), jwk }
+        TrustAnchor { iss: iss.into(), jwk }
     }
 
-    /// An anchor identified by its key alone (see the type's doc).
-    pub fn key_only(jwk: Jwk) -> Self {
-        TrustAnchor { iss: None, jwk }
+    /// An anchor named by its own key: `iss` is the key's RFC 9278
+    /// thumbprint URI, the same name derived tokens use. For a deployment
+    /// where the key is the identity (a single owner signing its own
+    /// allowances); step 3k still applies.
+    pub fn for_key(jwk: Jwk) -> Self {
+        TrustAnchor { iss: jwk.thumbprint_uri(), jwk }
     }
 }
 
@@ -270,7 +271,7 @@ fn check_root(root: &Claims, anchor: &TrustAnchor, now: i64, limits: &Limits) ->
     if !is_uri(&root.iss) {
         return Err(deny("root iss is not a URI"));
     }
-    if anchor.iss.as_ref().is_some_and(|iss| *iss != root.iss) {
+    if anchor.iss != root.iss {
         return Err(deny("root iss is not the verifying trust anchor's issuer"));
     }
     root.cnf.jwk.verifying_key()?;

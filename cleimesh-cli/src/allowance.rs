@@ -119,7 +119,6 @@ pub fn grant(
     owner: PathBuf,
     agent: PathBuf,
     out: PathBuf,
-    iss: String,
 ) -> Result<()> {
     let max = parse_money(&max)?;
     let holder: Jwk = read_json(&agent)?;
@@ -139,7 +138,7 @@ pub fn grant(
         return Err(anyhow!("not signed; no allowance issued"));
     }
 
-    let token = issue(&owner, &iss, &env, now()).map_err(|e| anyhow!("cannot issue: {e}"))?;
+    let token = issue(&owner, &env, now()).map_err(|e| anyhow!("cannot issue: {e}"))?;
     std::fs::write(&out, serde_json::to_vec_pretty(&AllowanceFile { token })?)?;
     eprintln!("allowance written to {}", out.display());
     Ok(())

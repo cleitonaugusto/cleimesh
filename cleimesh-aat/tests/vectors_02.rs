@@ -29,7 +29,7 @@ fn draft_02_vectors() {
         .as_array()
         .unwrap()
         .iter()
-        .map(|a| TrustAnchor { iss: Some(a["iss"].as_str().unwrap().to_string()), jwk: serde_json::from_value::<Jwk>(a["jwk"].clone()).unwrap() })
+        .map(|a| TrustAnchor { iss: a["iss"].as_str().unwrap().to_string(), jwk: serde_json::from_value::<Jwk>(a["jwk"].clone()).unwrap() })
         .collect();
     let defaults = &suite["params"];
 

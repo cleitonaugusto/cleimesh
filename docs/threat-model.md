@@ -143,10 +143,17 @@ granted directory, file names never. Tests: `cleimesh-p2p/tests/report.rs`,
   returned output of a `taints` tool to this chain". The prompt itself, or
   another tool outside the node, doesn't taint anything.
 - **Mislabelled tools.** Taint is only as good as the `taints` and
-  `clean_only` labels the token issuer chose.
+  `clean_only` labels the token issuer chose. `cleimesh mcp add` without
+  `--taints` or `--clean-only` grants every tool the server lists with
+  neither label; a file read can carry injected text as well as a web page.
+- **What a wrapped server says about its tools.** Tool names, descriptions
+  and schemas from a server behind `mcp wrap` reach the agent as the server
+  wrote them. The token limits which tools and arguments get through, not
+  what their descriptions tell the model.
 - **Taint across nodes.** Each node keeps its own view. The same token used
-  on two nodes, or on two `mcp serve` processes with different logs, is
-  tainted separately.
+  on two nodes, or on two `mcp serve` or `mcp wrap` processes with different
+  logs, is tainted separately. Servers added with `cleimesh mcp add` run
+  behind one wrapper (`mcp wrap --servers`), so they share one view.
 - **Coarse taint.** After reading one mail, the agent loses every clean-only
   tool until a human clears it. That is the price of being deterministic.
 - **A dishonest node, for calls that can't replay.** Calls that read
@@ -188,7 +195,7 @@ granted directory, file names never. Tests: `cleimesh-p2p/tests/report.rs`,
 | No central redaction of secrets in logs and errors | a secret printed by a tool could reach a log | S15 |
 | WASI preview2 has no per-call grants | refused rather than run with the wrong grants | R6 |
 | `host_in` on a native server behind `mcp wrap` checks the argument, not the connection | a redirect or DNS rebinding can take that server past the allowlist; sandboxed tools go through `http_fetch` instead | S19 |
-| No independent security review yet | | S13 |
+| No independent security review yet | a first review by the project's own assistant fixed three issues (a wrapped server called under another server's token, an allowance spend ledger reset on restart, IPv6 forms embedding private addresses); an outside review is still to come | S13 |
 
 ## Reporting
 

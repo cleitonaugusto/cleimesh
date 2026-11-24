@@ -185,6 +185,7 @@ impl StreamingSandbox {
         let mut linker = Linker::new(&engine);
         wasmtime_wasi::p1::add_to_linker_async(&mut linker, |data: &mut SandboxData| &mut data.wasi_p1_ctx)
             .map_err(anyhow::Error::from).context("failed to add wasi to linker")?;
+        crate::egress::add_to_linker(&mut linker).context("failed to add http_fetch")?;
 
         Self::add_streaming_functions(&mut linker)?;
 

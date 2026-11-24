@@ -33,6 +33,8 @@ pub struct GrantUse {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FsObserved {
     pub grants: Vec<GrantUse>,
+    /// Every hop of every `http_fetch`, refused or not (S19).
+    pub egress: Vec<crate::egress::Hop>,
 }
 
 /// wasmtime-wasi numbers preopens from 3, in the order they were added.
@@ -76,11 +78,16 @@ impl FsTracker {
     pub fn new(grants: Vec<String>) -> Self {
         let fds = (0..grants.len()).map(|i| (FIRST_PREOPEN_FD + i as i32, (i, Vec::new()))).collect();
         let grants = grants.into_iter().map(|grant| GrantUse { grant, ..Default::default() }).collect();
-        FsTracker { observed: FsObserved { grants }, fds }
+        FsTracker { observed: FsObserved { grants, ..Default::default() }, fds }
     }
 
     pub fn observed(&self) -> &FsObserved {
         &self.observed
+    }
+
+    /// Records the hops of one `http_fetch` (S19).
+    pub fn note_egress(&mut self, hops: Vec<crate::egress::Hop>) {
+        self.observed.egress.extend(hops);
     }
 
     /// `path` under `fd`: the grant and the components below it, `Err` with

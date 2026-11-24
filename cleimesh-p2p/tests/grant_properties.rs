@@ -13,12 +13,21 @@ fn dirs() -> impl Strategy<Value = Vec<String>> {
     prop::sample::subsequence(DIRS.to_vec(), 0..3).prop_map(|d| d.into_iter().map(String::from).collect())
 }
 
+const HOSTS: &[&str] = &["api.example", "API.example.", "api.example:8443", "cdn.example", "evil.example"];
+
+fn hosts() -> impl Strategy<Value = Vec<String>> {
+    prop::sample::subsequence(HOSTS.to_vec(), 0..3).prop_map(|h| h.into_iter().map(String::from).collect())
+}
+
 fn grant() -> impl Strategy<Value = ToolGrant> {
     let limit = prop::option::of(prop::sample::select(vec![10u64, 100, 1000]));
-    (dirs(), dirs(), any::<bool>(), limit.clone(), limit.clone(), limit, any::<bool>(), any::<bool>()).prop_map(|(read, write, network, i, m, t, taints, clean_only)| ToolGrant {
+    let flow = (any::<bool>(), any::<bool>(), hosts(), any::<bool>());
+    (dirs(), dirs(), any::<bool>(), limit.clone(), limit.clone(), limit, flow).prop_map(|(read, write, network, i, m, t, (taints, clean_only, hosts, private))| ToolGrant {
         read,
         write,
         network,
+        hosts,
+        private,
         max_instructions: i,
         max_memory_bytes: m.map(|m| m as usize),
         timeout_ms: t,
@@ -61,6 +70,10 @@ proptest! {
                 prop_assert!(under(dir, &token.write), "leaf writes {} beyond {:?}", dir, token);
             }
             prop_assert!(!leaf.network || token.network);
+            for host in &leaf.hosts {
+                prop_assert!(token.hosts.iter().any(|t| cleimesh_wasm_sandbox::egress::grant_covers(t, host)), "leaf fetches {} beyond {:?}", host, token);
+            }
+            prop_assert!(!leaf.private || token.private, "private shed below {:?}", token);
             // Flow restrictions only ever accumulate down the chain.
             prop_assert!(!token.taints || leaf.taints, "taints shed below {:?}", token);
             prop_assert!(!token.clean_only || leaf.clean_only, "clean_only shed below {:?}", token);

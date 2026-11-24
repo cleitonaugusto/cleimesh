@@ -9,6 +9,7 @@ authors = { workspace = true }
 cleimesh-core = { path = "../cleimesh-core" }
 cleimesh-aat = { path = "../cleimesh-aat" }
 cleimesh-receipt = { path = "../cleimesh-receipt" }
+url = "2.5.9"
 sha2 = { workspace = true }
 hmac = "0.12"
 chrono = { workspace = true }

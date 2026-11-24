@@ -60,6 +60,7 @@ impl WasmSandboxInner {
         p1::add_to_linker_async(&mut linker, |data: &mut SandboxData| &mut data.wasi_p1_ctx)
             .map_err(anyhow::Error::from).context("failed to add wasi to linker")?;
         crate::fs_observe::observe_filesystem(&mut linker).context("failed to observe the filesystem")?;
+        crate::egress::add_to_linker(&mut linker).context("failed to add http_fetch")?;
 
         Ok(Self {
             engine,

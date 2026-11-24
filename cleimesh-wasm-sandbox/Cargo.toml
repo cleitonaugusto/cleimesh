@@ -24,6 +24,9 @@ chacha20 = { version = "0.10", features = ["rng"] }
 wiggle = "48.0.6"
 futures = { workspace = true }
 notify = { version = "6.1", features = ["mio"] }
+# Egress decided on the connection (S19): the host fetches, pins the address, follows redirects itself.
+reqwest = { workspace = true }
+url = "2.5.9"
 
 [dev-dependencies]
 tempfile = { workspace = true }

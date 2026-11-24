@@ -127,9 +127,10 @@ enum Commands {
     /// Run a built-in attack-and-refusal demo straight from this binary, no
     /// repository or build needed. `cleimesh demo taint` (prompt injection
     /// stopped at the action), `payments` (a signed spend limit), `egress` (an
-    /// egress allowlist), or `all`. No real actions are taken.
+    /// egress allowlist), `redirect` (exfiltration through a redirect,
+    /// refused on the connection), or `all`. No real actions are taken.
     Demo {
-        /// Which demo to run: payments | taint | egress | all
+        /// Which demo to run: payments | taint | egress | redirect | all
         #[arg(default_value = "all")]
         name: String,
         /// Internal: be this demo's toy MCP server over stdio (used by the wrap)
@@ -572,6 +573,14 @@ struct TokenGrant {
     /// Let the granted tools use the network (if the node allows it)
     #[arg(long)]
     network: bool,
+    /// Host the granted tools may fetch, checked on every redirect and on the
+    /// address reached (repeatable; implies --network)
+    #[arg(long = "host", value_name = "HOST")]
+    hosts: Vec<String>,
+    /// Let the granted hosts be private, loopback or link-local addresses
+    /// (internal APIs); refused by default
+    #[arg(long = "allow-private")]
+    allow_private: bool,
     /// Instruction budget per run
     #[arg(long, value_name = "N")]
     max_instructions: Option<u64>,
@@ -781,6 +790,7 @@ async fn run_tool_local(
     sandbox.register_wasm_module("file_read", include_bytes!("../../wasm-tools/builtins.wasm").to_vec())?;
     sandbox.register_wasm_module("file_write", include_bytes!("../../wasm-tools/builtins.wasm").to_vec())?;
     sandbox.register_wasm_module("json_transform", include_bytes!("../../wasm-tools/builtins.wasm").to_vec())?;
+    sandbox.register_wasm_module("fetch_url", include_bytes!("../../wasm-tools/builtins.wasm").to_vec())?;
 
     let payload = ToolPayload {
         tool_name: tool,
@@ -827,7 +837,7 @@ async fn start_node(listen: String, bootstrap: Option<String>, mdns: bool, ident
     let identity = AgentIdentity {
         peer_id: "cli-node".to_string(),
         public_key: vec![],
-        capabilities: vec!["echo".to_string(), "file_read".to_string(), "file_write".to_string(), "json_transform".to_string()],
+        capabilities: vec!["echo".to_string(), "file_read".to_string(), "file_write".to_string(), "json_transform".to_string(), "fetch_url".to_string()],
     };
 
     let mut node = CleiMeshNode::new(config, identity)?;
@@ -1552,7 +1562,9 @@ impl TokenGrant {
         let grant = cleimesh_p2p::grants::ToolGrant {
             read: absolute(&self.read)?,
             write: absolute(&self.write)?,
-            network: self.network,
+            network: self.network || !self.hosts.is_empty(),
+            hosts: self.hosts.clone(),
+            private: self.allow_private,
             max_instructions: self.max_instructions,
             max_memory_bytes: self.max_memory,
             timeout_ms: self.timeout_ms,

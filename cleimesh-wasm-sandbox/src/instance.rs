@@ -51,6 +51,7 @@ impl SandboxInstance {
         let mut linker = Linker::new(store.engine());
         p1::add_to_linker_async(&mut linker, |data: &mut SandboxData| &mut data.wasi_p1_ctx)
             .map_err(anyhow::Error::from).context("failed to add wasi to linker")?;
+        crate::egress::add_to_linker(&mut linker).context("failed to add http_fetch")?;
 
         let instance = linker.instantiate_async(&mut *store, module).await
             .map_err(anyhow::Error::from).context("failed to instantiate wasm module")?;
@@ -156,6 +157,7 @@ impl EphemeralSandbox {
         let mut linker = Linker::new(&engine);
         p1::add_to_linker_async(&mut linker, |data: &mut SandboxData| &mut data.wasi_p1_ctx)
             .map_err(anyhow::Error::from).context("failed to add wasi to linker")?;
+        crate::egress::add_to_linker(&mut linker).context("failed to add http_fetch")?;
 
         Ok(Self { engine, config, linker })
     }

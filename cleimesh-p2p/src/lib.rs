@@ -364,6 +364,7 @@ impl CleiMeshNode {
         sandbox.register_wasm_module("file_read", include_bytes!("../../wasm-tools/builtins.wasm").to_vec())?;
         sandbox.register_wasm_module("file_write", include_bytes!("../../wasm-tools/builtins.wasm").to_vec())?;
         sandbox.register_wasm_module("json_transform", include_bytes!("../../wasm-tools/builtins.wasm").to_vec())?;
+        sandbox.register_wasm_module("fetch_url", include_bytes!("../../wasm-tools/builtins.wasm").to_vec())?;
         
         Ok(Self {
             config,
@@ -907,8 +908,9 @@ impl CleiMeshNode {
     /// carry the content.
     fn conclude(&mut self, outcome: receipts::Outcome, response: &ToolResponse, fs: &cleimesh_wasm_sandbox::FsObserved) {
         let (step, taints) = (outcome.decision_step().to_string(), outcome.taints.clone());
+        let egress = receipts::egress_observed(fs);
         let fs = receipts::fs_observed(fs, &self.aat_key);
-        self.record(outcome.ran(response, fs));
+        self.record(outcome.ran(response, fs, egress));
         for holder in taints {
             self.tainted.insert(holder, step.clone());
         }

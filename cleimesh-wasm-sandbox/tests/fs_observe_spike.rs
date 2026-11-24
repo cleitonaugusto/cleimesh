@@ -58,6 +58,8 @@ async fn shadowed_path_open_sees_the_paths_and_delegates() {
         .build_p1();
     let mut store = Store::new(&engine, Data { wasi, opened: Vec::new() });
     let module = Module::new(&engine, BUILTINS).unwrap();
+    // The spike only exercises the filesystem; http_fetch (S19) is not wired here.
+    linker.define_unknown_imports_as_traps(&module).unwrap();
     let instance = linker.instantiate_async(&mut store, &module).await.unwrap();
     if let Ok(init) = instance.get_typed_func::<(), ()>(&mut store, "_initialize") {
         init.call_async(&mut store, ()).await.unwrap();

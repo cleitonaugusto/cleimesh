@@ -125,13 +125,20 @@ granted directory, file names never. Tests: `cleimesh-p2p/tests/report.rs`,
   token granting such a tool directories or network is refused, since
   those grants could not be enforced. The wrapper also keeps the node key
   in its own process, so run it as a user the agent is not.
-- **Where a tool's connection ends up.** `host_in` checks the URL the
-  agent asks for, not the connection the tool makes. A redirect to another
-  host, DNS rebinding (an allowed name that resolves to an internal address
-  on a later lookup), or a server that ignores its argument all get past
-  it. Userinfo tricks and odd IP spellings do not: the URL is parsed, not
-  string-matched. Enforcing at the connection needs host-mediated HTTP in
-  the sandbox (S19); a native server behind `mcp wrap` is out of reach.
+- **Where a tool's connection ends up.** Sandboxed tools have no sockets.
+  They reach the network only through `http_fetch`, and only for the hosts
+  their grant lists (`hosts`, narrowing down the chain like directories do).
+  The host makes every connection: it checks the name on each hop and
+  follows redirects itself, resolves the name once and connects to that
+  address (no second lookup to rebind), refuses private, loopback and
+  link-local addresses (cloud metadata included), and reaches an IP literal,
+  in any spelling, only if that address is itself granted. Each hop goes in
+  the result receipt: origin, address, status and refusal, the full URL
+  only as a hash. Three things stay open. Several sites behind one address
+  (a CDN): the grant fixes the name sent and the address reached, not which
+  site the server picks. `host_in` on a native server behind `mcp wrap`
+  still checks only the argument; we don't see that server's sockets. And a
+  granted host that serves whatever it is asked for is a granted host.
 - **Content that reaches the agent another way.** Taint means "the node
   returned output of a `taints` tool to this chain". The prompt itself, or
   another tool outside the node, doesn't taint anything.
@@ -180,7 +187,7 @@ granted directory, file names never. Tests: `cleimesh-p2p/tests/report.rs`,
 | Native implementations of the built-in tools still exist in `tools.rs` (unused by the node) | someone embedding the library could run a tool outside the sandbox by mistake | S14 |
 | No central redaction of secrets in logs and errors | a secret printed by a tool could reach a log | S15 |
 | WASI preview2 has no per-call grants | refused rather than run with the wrong grants | R6 |
-| `host_in` is checked on the argument, not on the connection | a redirect or DNS rebinding can take a tool past the egress allowlist | S19 |
+| `host_in` on a native server behind `mcp wrap` checks the argument, not the connection | a redirect or DNS rebinding can take that server past the allowlist; sandboxed tools go through `http_fetch` instead | S19 |
 | No independent security review yet | | S13 |
 
 ## Reporting

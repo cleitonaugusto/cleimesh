@@ -20,10 +20,8 @@ pub fn create_wasi_p2_ctx(config: &SandboxConfig) -> Result<WasiCtx> {
         }
     }
 
-    // Configure network access
-    if config.allow_network {
-        builder.inherit_network();
-    }
+    // No sockets: `inherit_network` would hand the guest the host's whole
+    // network, past any grant. Egress goes through `http_fetch` (S19).
 
     // Configure stdin/stdout/stderr
     builder.inherit_stdio();
@@ -208,25 +206,10 @@ pub mod tool {
         let _instance = linker.instantiate_async(&mut store, &component).await
             .map_err(anyhow::Error::from).context("failed to instantiate component")?;
 
-        // Get the tool function from component exports
-        // Note: Component Model uses different export mechanism
-        // This is a simplified implementation
-        
-        // For now, fall back to core module approach for tools
-        // In a full implementation, we'd use component exports
-        
-        // Prepare input
-        let input = serde_json::json!({
-            "tool": tool_name,
-            "arguments": arguments,
-        });
-        
-        // Return mock output for now
-        Ok(serde_json::json!({
-            "success": true,
-            "message": "WASI Preview2 component execution not fully implemented",
-            "tool": tool_name
-        }))
+        // Components have no CleiMesh tool ABI yet. Refuse rather than
+        // report a success for a tool that never ran.
+        let _ = arguments;
+        anyhow::bail!("WASI Preview2 components cannot run tools yet ({tool_name}); build the tool for wasm32-wasip1")
     }
 }
 

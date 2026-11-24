@@ -78,6 +78,31 @@ pub fn fs_dir_pseudonym(node_key: &cleimesh_aat::SigningKey, grant: &str, compon
         .join("/")
 }
 
+/// The `egress` block of a result receipt (S19): every hop of every fetch,
+/// refused or not. A hop states its origin, the address connected to, the
+/// status and any refusal; the full URL only as a SHA-256, since paths and
+/// queries can carry personal data. `None` when the call fetched nothing.
+pub(crate) fn egress_observed(fs: &cleimesh_wasm_sandbox::FsObserved) -> Option<Value> {
+    if fs.egress.is_empty() {
+        return None;
+    }
+    let hops: Vec<Value> = fs
+        .egress
+        .iter()
+        .map(|h| {
+            let origin = url::Url::parse(&h.url).map(|u| u.origin().ascii_serialization()).unwrap_or_else(|_| "invalid".into());
+            json!({
+                "origin": origin,
+                "url_sha256": sha256_hex(h.url.as_bytes()),
+                "addr": h.addr.map(|a| a.to_string()),
+                "status": h.status,
+                "refused": h.refused,
+            })
+        })
+        .collect();
+    Some(json!({"hops": hops}))
+}
+
 /// The `fs` block of a result receipt: per granted directory, the
 /// directories read and written (pseudonymized, at most [`FS_MAX_DEPTH`]
 /// deep and [`FS_MAX_DIRS`] in all) and the file counts. `None` when the
@@ -253,8 +278,9 @@ impl Outcome {
 
     /// Receipt of what was observed when the call ran, pointing at its
     /// decision receipt.
-    /// `fs` is what the call touched, from [`fs_observed`].
-    pub(crate) fn ran(self, response: &ToolResponse, fs: Option<Value>) -> Entry {
+    /// `fs` is what the call touched, from [`fs_observed`]; `egress` the
+    /// hops its fetches made, from [`egress_observed`].
+    pub(crate) fn ran(self, response: &ToolResponse, fs: Option<Value>, egress: Option<Value>) -> Entry {
         let mut observed = serde_json::Map::new();
         observed.insert("success".into(), json!(response.success));
         observed.insert("output_sha256".into(), json!(json_sha256(&response.output)));
@@ -264,6 +290,9 @@ impl Outcome {
         observed.insert("duration_ms".into(), json!(self.received.elapsed().as_millis() as u64));
         if let Some(fs) = fs {
             observed.insert("fs".into(), fs);
+        }
+        if let Some(egress) = egress {
+            observed.insert("egress".into(), egress);
         }
         let params = json!({
             "profile": PROFILE,
@@ -300,7 +329,7 @@ pub(crate) fn sandbox_terms(config: &SandboxConfig) -> Value {
             "seed": d.seed.iter().map(|b| format!("{:02x}", b)).collect::<String>(),
         })
     });
-    json!({
+    let mut terms = json!({
         "replayable": not_replayable.is_empty(),
         "not_replayable_because": not_replayable,
         "replay": replay,
@@ -312,7 +341,13 @@ pub(crate) fn sandbox_terms(config: &SandboxConfig) -> Value {
         "max_instructions": config.limits.max_instructions,
         "max_memory_bytes": config.max_memory_bytes,
         "timeout_ms": config.max_execution_time.as_millis() as u64,
-    })
+    });
+    // Only present when granted, so receipts without egress stay as they were.
+    if let Some(egress) = &config.egress {
+        terms["egress_hosts"] = json!(egress.hosts);
+        terms["egress_private"] = json!(egress.allow_private);
+    }
+    terms
 }
 
 /// What a call to a native MCP server runs under (`cleimesh mcp wrap`):
@@ -385,13 +420,13 @@ mod tests {
     fn too_many_directories_collapse_until_they_fit() {
         let key = cleimesh_aat::SigningKey::from_bytes(&[7; 32]);
         let read = (0..FS_MAX_DIRS + 6).map(|i| vec!["many".to_string(), format!("d{i}")]).collect();
-        let fs = FsObserved { grants: vec![GrantUse { grant: "/p".into(), read, ..Default::default() }] };
+        let fs = FsObserved { grants: vec![GrantUse { grant: "/p".into(), read, ..Default::default() }], ..Default::default() };
         let block = fs_observed(&fs, &key).unwrap();
         let names = block["grants"][0]["read"].as_array().unwrap();
         assert_eq!(names, &vec![json!(fs_dir_pseudonym(&key, "/p", &["many".to_string()]))]);
         assert_eq!(block["truncated"], json!(true));
 
-        let few = FsObserved { grants: vec![GrantUse { grant: "/p".into(), read: [vec![]].into(), ..Default::default() }] };
+        let few = FsObserved { grants: vec![GrantUse { grant: "/p".into(), read: [vec![]].into(), ..Default::default() }], ..Default::default() };
         let block = fs_observed(&few, &key).unwrap();
         assert_eq!((block["grants"][0]["read"].clone(), block["truncated"].clone()), (json!(["."]), json!(false)));
         assert!(fs_observed(&FsObserved::default(), &key).is_none());

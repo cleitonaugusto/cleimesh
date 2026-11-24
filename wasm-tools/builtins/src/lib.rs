@@ -7,8 +7,18 @@
 //!   result is `(out_ptr << 32) | out_len` pointing to `{"ok": value}` or `{"error": "msg"}`.
 //!
 //! File access goes through WASI, so it only reaches directories the host preopened.
+//! Network access goes through the host's `cleimesh.http_fetch`, so it only
+//! reaches the hosts the grant lists, checked on every hop (S19).
 
 use serde_json::{json, Value};
+
+#[link(wasm_import_module = "cleimesh")]
+extern "C" {
+    /// Host import: the request is JSON `{"method", "url", "headers", "body"}`;
+    /// the result packs `(ptr << 32) | len` of `{"ok": response}` or
+    /// `{"error": reason}` in a buffer from `cleimesh_alloc`.
+    fn http_fetch(ptr: u32, len: u32) -> u64;
+}
 
 #[no_mangle]
 pub extern "C" fn cleimesh_alloc(len: u32) -> *mut u8 {
@@ -51,6 +61,7 @@ fn dispatch(input: &[u8]) -> Result<Value, String> {
         "file_read" => file_read(&args),
         "file_write" => file_write(&args),
         "json_transform" => json_transform(&args),
+        "fetch_url" => fetch_url(&args),
         other => Err(format!("unknown tool '{other}'")),
     }
 }
@@ -96,4 +107,28 @@ fn json_transform(args: &Value) -> Result<Value, String> {
         };
     }
     Ok(result)
+}
+
+/// Fetches `url` (optional `method`, `headers` as `[[name, value]]`, `body`)
+/// through the host, which decides what may be reached.
+fn fetch_url(args: &Value) -> Result<Value, String> {
+    let request = json!({
+        "url": str_arg(args, "url")?,
+        "method": args.get("method").and_then(Value::as_str).unwrap_or("GET"),
+        "headers": args.get("headers").cloned().unwrap_or_else(|| json!([])),
+        "body": args.get("body").and_then(Value::as_str),
+    });
+    let bytes = serde_json::to_vec(&request).map_err(|e| e.to_string())?;
+    // SAFETY: the host reads `bytes` during the call and answers in a buffer
+    // it got from `cleimesh_alloc`, which this function then owns.
+    let reply = unsafe {
+        let packed = http_fetch(bytes.as_ptr() as u32, bytes.len() as u32);
+        let (ptr, len) = ((packed >> 32) as usize, (packed & 0xffff_ffff) as usize);
+        Vec::from_raw_parts(ptr as *mut u8, len, len)
+    };
+    let mut reply: Value = serde_json::from_slice(&reply).map_err(|e| format!("bad reply from the host: {e}"))?;
+    match reply.get("error") {
+        Some(error) => Err(error.as_str().map(str::to_owned).unwrap_or_else(|| error.to_string())),
+        None => Ok(reply.get_mut("ok").map(Value::take).unwrap_or(Value::Null)),
+    }
 }

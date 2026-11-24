@@ -14,6 +14,7 @@ pub mod streaming;
 pub mod wasi_p2;
 pub mod hot_reload;
 pub mod fs_observe;
+pub mod egress;
 
 pub use sandbox::{WasmSandboxInner, SandboxHandle, InstanceHandle, create_wasi_p1_ctx};
 pub use instance::{SandboxInstance, EphemeralSandbox, SandboxData};
@@ -45,6 +46,8 @@ pub struct SandboxConfig {
     /// same module, input and config give the same output: what lets an
     /// auditor replay a call from its receipt (C4).
     pub determinism: Option<Determinism>,
+    /// What `http_fetch` may reach; `None` refuses every fetch (S19).
+    pub egress: Option<egress::Egress>,
 }
 
 /// The values a deterministic run fixes; receipts record them.
@@ -80,6 +83,7 @@ impl Default for SandboxConfig {
             max_memory_bytes: 16 * 1024 * 1024,
             max_execution_time: Duration::from_millis(100),
             determinism: None,
+            egress: None,
         }
     }
 }

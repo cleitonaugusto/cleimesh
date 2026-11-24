@@ -42,6 +42,16 @@ pub struct ToolGrant {
     pub write: Vec<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub network: bool,
+    /// Hosts the tool may fetch through `http_fetch`, checked on every hop
+    /// and on the address reached (S19): `name`, `name:port`, or an IP
+    /// literal with an optional port. Needs `network`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hosts: Vec<String>,
+    /// Let `hosts` resolve to private, loopback and link-local addresses
+    /// (internal APIs). Off by default: it is what turns a fetch tool into a
+    /// probe of the node's own network.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub private: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_instructions: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -88,6 +98,12 @@ pub fn of(claims: &Claims) -> Result<Grants, String> {
         for dir in grant.read.iter().chain(&grant.write) {
             check_dir(dir)?;
         }
+        if !grant.hosts.is_empty() && !grant.network {
+            return Err("hosts granted without network".into());
+        }
+        if let Some(host) = grant.hosts.iter().find(|h| cleimesh_wasm_sandbox::egress::parse_grant_host(h).is_none()) {
+            return Err(format!("granted host {:?} must be a name or IP address, with an optional :port", host));
+        }
     }
     Ok(entry.tools)
 }
@@ -118,6 +134,12 @@ fn narrows(child: &ToolGrant, parent: &ToolGrant) -> Result<(), String> {
     }
     if child.network && !parent.network {
         return Err("network not granted by the parent".into());
+    }
+    if let Some(host) = child.hosts.iter().find(|h| !parent.hosts.iter().any(|p| cleimesh_wasm_sandbox::egress::grant_covers(p, h))) {
+        return Err(format!("host {} not granted by the parent", host));
+    }
+    if child.private && !parent.private {
+        return Err("private addresses not granted by the parent".into());
     }
     let raised = |c: Option<u64>, p: Option<u64>| matches!((c, p), (Some(c), Some(p)) if c > p);
     if parent.taints && !child.taints {
@@ -191,6 +213,10 @@ pub fn sandbox_config(base: &SandboxConfig, grant: &ToolGrant, root: &ToolGrant,
     config.allowed_paths = as_strings(read);
     config.writable_paths = as_strings(write);
     config.allow_network = base.allow_network && grant.network;
+    // Egress needs no node switch: the root is signed by the node's key, so
+    // the hosts a chain grants are the operator's decision, like directories.
+    config.egress = (grant.network && !grant.hosts.is_empty())
+        .then(|| cleimesh_wasm_sandbox::egress::Egress { allow_private: grant.private, ..cleimesh_wasm_sandbox::egress::Egress::new(grant.hosts.clone()) });
     if let Some(max) = grant.max_instructions {
         config.limits.max_instructions = config.limits.max_instructions.min(max);
     }

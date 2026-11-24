@@ -295,6 +295,50 @@ enum McpCommands {
         #[arg(last = true, required = true, value_name = "COMMAND")]
         command: Vec<String>,
     },
+    /// One command: put an MCP server behind a token and register it with
+    /// Claude Code. Creates the node and client keys if missing, asks the
+    /// server for its tools (or takes --tool), issues a token for exactly
+    /// those, and runs `claude mcp add NAME -- cleimesh mcp wrap --token FILE
+    /// -- COMMAND`. Every call then leaves a signed receipt. Run it again to
+    /// renew the token.
+    /// Example: cleimesh mcp add fetch --taints fetch -- uvx mcp-server-fetch
+    Add {
+        /// Name the client lists the server under
+        name: String,
+        /// Grant only this tool (repeatable). Default: every tool the server lists
+        #[arg(long = "tool", value_name = "NAME")]
+        tools: Vec<String>,
+        /// Tool that brings in outside content (web, mail, files): after it
+        /// returns, the agent is tainted (repeatable)
+        #[arg(long, value_name = "TOOL")]
+        taints: Vec<String>,
+        /// Tool that acts on the world (send, write, pay): refused while the
+        /// agent is tainted (repeatable)
+        #[arg(long = "clean-only", value_name = "TOOL")]
+        clean_only: Vec<String>,
+        /// Token lifetime in seconds (default 30 days)
+        #[arg(long, default_value = "2592000")]
+        ttl: i64,
+        /// Claude Code scope: local, user or project
+        #[arg(long)]
+        scope: Option<String>,
+        /// Print the command, and a JSON entry for other clients (Cursor,
+        /// Windsurf...), instead of running `claude mcp add`
+        #[arg(long)]
+        print: bool,
+        /// Where to write the token (default: <config dir>/cleimesh/mcp/NAME.json)
+        #[arg(long, value_name = "FILE")]
+        out: Option<PathBuf>,
+        /// Client key the token is issued to (default: ~/.config/cleimesh/client.key)
+        #[arg(long, value_name = "FILE")]
+        holder: Option<PathBuf>,
+        /// Node key that signs the token (default: ~/.config/cleimesh/identity.key)
+        #[arg(long)]
+        identity: Option<PathBuf>,
+        /// The MCP server's command and its arguments, after `--`
+        #[arg(last = true, required = true, value_name = "COMMAND")]
+        command: Vec<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -719,6 +763,9 @@ async fn run(cli: Cli) -> Result<()> {
                 None => mcp_wrap(token, holder, identity, receipts, command).await?,
             }
         }
+        Commands::Mcp(McpCommands::Add { name, tools, taints, clean_only, ttl, scope, print, out, holder, identity, command }) => {
+            mcp_add(McpAdd { name, tools, taints, clean_only, ttl, scope, print, out, holder, identity, command }).await?
+        }
         Commands::Allowance(cmd) => match cmd {
             AllowanceCommands::Keygen { out } => allowance::keygen(&out)?,
             AllowanceCommands::Grant { max, tool, to, calls, ttl, owner, agent, out } => {
@@ -1114,6 +1161,136 @@ async fn mcp_wrap(tokens: Vec<PathBuf>, holder: Option<PathBuf>, identity: Optio
         .map_err(|e| anyhow::anyhow!("MCP server failed to start: {}", e))?;
     service.waiting().await.map_err(|e| anyhow::anyhow!("MCP server stopped: {}", e))?;
     Ok(())
+}
+
+struct McpAdd {
+    name: String,
+    tools: Vec<String>,
+    taints: Vec<String>,
+    clean_only: Vec<String>,
+    ttl: i64,
+    scope: Option<String>,
+    print: bool,
+    out: Option<PathBuf>,
+    holder: Option<PathBuf>,
+    identity: Option<PathBuf>,
+    command: Vec<String>,
+}
+
+/// `cleimesh mcp add`: keys, the server's tool list, a token for it, and the
+/// `mcp wrap` line registered with the client.
+async fn mcp_add(a: McpAdd) -> Result<()> {
+    use rmcp::ServiceExt;
+    let fail = |m: String| -> cleimesh_core::CleiMeshError { anyhow::anyhow!(m).into() };
+
+    if a.name.is_empty() || !a.name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err(fail(format!("Name {:?}: use letters, digits, - and _", a.name)));
+    }
+    let node_path = identity_key_path(a.identity.clone(), node_key::NODE_KEY_FILE)?;
+    let client_path = identity_key_path(a.holder.clone(), node_key::CLIENT_KEY_FILE)?;
+    let node = node_key::load_or_generate(&node_path)?;
+    let client = node_key::load_or_generate(&client_path)?;
+
+    let granted: Vec<String> = if a.tools.is_empty() {
+        let mut child = tokio::process::Command::new(&a.command[0]);
+        child.args(&a.command[1..]).stderr(std::process::Stdio::null());
+        let transport = rmcp::transport::TokioChildProcess::new(child).map_err(|e| fail(format!("Cannot start {}: {}", a.command[0], e)))?;
+        let server = ().serve(transport).await.map_err(|e| fail(format!("{} did not start as an MCP server: {}", a.command[0], e)))?;
+        let listed = server.list_all_tools().await.map_err(|e| fail(format!("Cannot list the tools of {}: {}", a.command[0], e)));
+        let _ = server.cancel().await;
+        listed?.into_iter().map(|t| t.name.to_string()).collect()
+    } else {
+        a.tools.clone()
+    };
+    if granted.is_empty() {
+        return Err(fail(format!("{} lists no tools; nothing to grant", a.command[0])));
+    }
+    for t in a.taints.iter().chain(&a.clean_only) {
+        if !granted.contains(t) {
+            return Err(fail(format!("{} is not a granted tool (granted: {})", t, granted.join(", "))));
+        }
+    }
+
+    let mut tools = aat::Tools::new();
+    for t in &granted {
+        if tools.insert(t.clone(), Default::default()).is_some() {
+            return Err(fail(format!("Tool {} given twice", t)));
+        }
+    }
+    let mut grants = cleimesh_p2p::grants::Grants::new();
+    for t in &a.taints {
+        grants.entry(t.clone()).or_default().taints = true;
+    }
+    for t in &a.clean_only {
+        grants.entry(t.clone()).or_default().clean_only = true;
+    }
+    let iss = format!("urn:cleimesh:node:{}", node.public().to_peer_id());
+    let holder_jwk = holder(&client.public().to_peer_id().to_string())?;
+    let root = aat::issue_root_with(&node_key::aat_signing_key(&node)?, &iss, &holder_jwk, tools, sandbox_entry(&grants), unix_now(), a.ttl, 3)
+        .map_err(|e| fail(format!("Cannot issue token: {}", e)))?;
+
+    let token_path = match a.out {
+        Some(p) => p,
+        None => node_path.parent().map(|d| d.join("mcp").join(format!("{}.json", a.name))).ok_or_else(|| fail("No config directory; pass --out".into()))?,
+    };
+    if let Some(dir) = token_path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir).map_err(|e| fail(format!("Cannot create {}: {}", dir.display(), e)))?;
+    }
+    std::fs::write(&token_path, serde_json::to_string_pretty(&ChainFile { chain: vec![root] })?)
+        .map_err(|e| fail(format!("Cannot write {}: {}", token_path.display(), e)))?;
+
+    let abs = |p: &std::path::Path| std::path::absolute(p).map(|p| p.display().to_string()).map_err(|e| fail(format!("{}: {}", p.display(), e)));
+    let exe = std::env::current_exe().map_err(|e| fail(format!("Cannot find this binary: {}", e)))?;
+    let mut wrap = vec![exe.display().to_string(), "mcp".into(), "wrap".into(), "--token".into(), abs(&token_path)?];
+    if let Some(h) = &a.holder {
+        wrap.extend(["--holder".into(), abs(h)?]);
+    }
+    if let Some(i) = &a.identity {
+        wrap.extend(["--identity".into(), abs(i)?]);
+    }
+    wrap.push("--".into());
+    wrap.extend(a.command.iter().cloned());
+
+    eprintln!("Token for {}: {} ({} days)", a.name, token_path.display(), a.ttl / 86_400);
+    for t in &granted {
+        let flag = grants.get(t).map(|g| if g.taints { " (taints the agent)" } else if g.clean_only { " (refused once the agent is tainted)" } else { "" }).unwrap_or("");
+        eprintln!("  grants {}{}", t, flag);
+    }
+    eprintln!("Every call leaves a signed receipt: cleimesh audit verify. Run this again to renew the token.");
+
+    let claude = !a.print && std::process::Command::new("claude").arg("--version").stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success());
+    if !claude {
+        let line: Vec<String> = wrap.iter().map(|s| shell_quote(s)).collect();
+        println!("claude mcp add {} -- {}", a.name, line.join(" "));
+        println!("{}", serde_json::to_string(&serde_json::json!({ "mcpServers": { &a.name: { "command": &wrap[0], "args": &wrap[1..] } } }))?);
+        return Ok(());
+    }
+    let known = std::process::Command::new("claude").args(["mcp", "get", &a.name]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success());
+    if known {
+        eprintln!("{} is already registered with Claude Code; the token it reads was renewed. To change the command: claude mcp remove {}, then run this again", a.name, a.name);
+        return Ok(());
+    }
+    let mut add = std::process::Command::new("claude");
+    add.args(["mcp", "add"]);
+    if let Some(s) = &a.scope {
+        add.args(["--scope", s]);
+    }
+    add.arg(&a.name).arg("--").args(&wrap);
+    let status = add.status().map_err(|e| fail(format!("Cannot run claude: {}", e)))?;
+    if !status.success() {
+        return Err(fail(format!("claude mcp add failed ({})", status)));
+    }
+    eprintln!("Registered {} with Claude Code. Restart the session to load it.", a.name);
+    Ok(())
+}
+
+/// Quote an argument for a POSIX shell, only when it needs it.
+fn shell_quote(s: &str) -> String {
+    if !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || "/._-=:@+,".contains(c)) {
+        s.to_string()
+    } else {
+        format!("'{}'", s.replace('\'', "'\\''"))
+    }
 }
 
 fn audit_sth(receipts: Option<PathBuf>, identity: Option<PathBuf>) -> Result<()> {

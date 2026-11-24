@@ -405,3 +405,64 @@ async fn mcp_wrap_passes_on_only_what_the_token_grants_and_receipts_it() {
     assert_eq!(terms["runs_in"], "native MCP server");
     assert!(!log.contains(&path(&inner_chain)), "the wrapped command line leaked into the receipts");
 }
+
+#[tokio::test]
+async fn mcp_add_issues_a_token_for_the_servers_tools_and_prints_a_working_wrap_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().canonicalize().unwrap();
+    let k = |name: &str| base.join(name);
+    let path = |p: &Path| p.to_str().unwrap().to_string();
+
+    // The server to protect: `mcp serve`, which lists its four built-in tools.
+    let (inner_node, inner_agent, inner_chain) = (k("inner-node.key"), k("inner-agent.key"), k("inner.json"));
+    cleimesh(&[
+        "token", "issue", &peer_id(&inner_agent), "--tool", "echo", "--tool", "json_transform",
+        "--identity", &path(&inner_node), "--output", &path(&inner_chain),
+    ]);
+    let inner = [
+        env!("CARGO_BIN_EXE_cleimesh"), "mcp", "serve", "--token", &path(&inner_chain), "--holder", &path(&inner_agent),
+        "--identity", &path(&inner_node), "--receipts", &path(&k("inner.jsonl")),
+    ]
+    .map(String::from);
+
+    // One command, keys created on the way; no --tool, so it asks the server.
+    let (node, agent, token) = (k("node.key"), k("agent.key"), k("srv.json"));
+    let mut add = vec!["mcp", "add", "srv", "--print", "--clean-only", "json_transform", "--out", token.to_str().unwrap()];
+    add.extend(["--holder", agent.to_str().unwrap(), "--identity", node.to_str().unwrap(), "--"]);
+    add.extend(inner.iter().map(String::as_str));
+    let printed = cleimesh(&add);
+    let mut lines = printed.lines();
+    let line = lines.next().unwrap();
+    assert!(line.starts_with("claude mcp add srv -- ") && line.contains(" mcp wrap --token "), "unexpected: {line}");
+    let entry: Value = serde_json::from_str(lines.next().unwrap()).unwrap();
+    assert!(node.exists() && agent.exists() && token.exists());
+
+    // The token grants exactly what the server listed, json_transform clean-only.
+    let chain: Value = serde_json::from_str(&std::fs::read_to_string(&token).unwrap()).unwrap();
+    let claims = cleimesh_aat::inspect(chain["chain"][0].as_str().unwrap()).unwrap();
+    let tools = claims.tools().unwrap().unwrap();
+    let mut granted: Vec<&String> = tools.keys().collect();
+    granted.sort();
+    assert_eq!(granted, ["echo", "file_read", "file_write", "json_transform"]);
+    assert!(serde_json::to_string(&claims.authorization_details).unwrap().contains("clean_only"));
+
+    // A client started from the JSON entry gets those tools and a working call.
+    let srv = &entry["mcpServers"]["srv"];
+    let mut wrap = tokio::process::Command::new(srv["command"].as_str().unwrap());
+    wrap.args(srv["args"].as_array().unwrap().iter().map(|a| a.as_str().unwrap()));
+    wrap.env("HOME", &base).env("XDG_DATA_HOME", base.join("data"));
+    let client = ().serve(TokioChildProcess::new(wrap).unwrap()).await.unwrap();
+    let mut tools: Vec<String> = client.list_all_tools().await.unwrap().iter().map(|t| t.name.to_string()).collect();
+    tools.sort();
+    assert_eq!(tools, ["echo", "file_read", "file_write", "json_transform"]);
+    let echo = client.call_tool(CallToolRequestParams::new("echo").with_arguments(args(json!({"message": "oi"})))).await.unwrap();
+    assert_ne!(echo.is_error, Some(true), "unexpected: {}", text(&echo));
+    client.cancel().await.unwrap();
+
+    // A taint flag on a tool the server doesn't have is refused.
+    let mut bad = vec!["mcp", "add", "srv", "--print", "--taints", "nope", "--tool", "echo", "--out", token.to_str().unwrap()];
+    bad.extend(["--holder", agent.to_str().unwrap(), "--identity", node.to_str().unwrap(), "--", "true"]);
+    let out = Command::new(env!("CARGO_BIN_EXE_cleimesh")).args(&bad).output().unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("nope is not a granted tool"));
+}

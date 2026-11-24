@@ -182,8 +182,16 @@ Tested in throwaway containers with a scripted model in place of an LLM ([`tests
 
 ### Put an existing MCP server behind a token
 
+One command, no setup: it creates the keys if they're missing, asks the server for its tools, issues a token for exactly those, and registers the wrapped server with Claude Code:
+
 ```sh
 # The fetch server, as the agent's only way to the web, tainting what it brings in
+cleimesh mcp add fetch --taints fetch -- uvx mcp-server-fetch
+```
+
+`--tool` grants fewer tools than the server lists, `--clean-only` marks the ones that act on the world (refused once the agent is tainted), and `--print` prints the line plus a JSON entry for Cursor and other clients instead of calling `claude`. The token lasts 30 days; run the command again to renew it. The same thing by hand, with argument constraints:
+
+```sh
 cleimesh token issue <agent> --tool fetch --taints -o fetch.json
 claude mcp add fetch -- cleimesh mcp wrap --token fetch.json -- uvx mcp-server-fetch
 ```

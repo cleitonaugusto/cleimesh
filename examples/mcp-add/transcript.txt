@@ -1,25 +1,27 @@
 == cleimesh mcp add fetch --taints fetch -- python -m mcp_server_fetch
 Token for fetch: /root/.config/cleimesh/mcp/fetch.json (30 days)
-  grants fetch (taints the agent)
+It grants these tools. Read what each tells the model: the token limits calls, not what a description says.
+  fetch [taints the agent]: Fetches a URL from the internet and optionally extracts its contents as markdown.
 1 server(s) behind one wrapper (fetch): one receipt log, one view of taint across them. Every call leaves a signed receipt (cleimesh audit verify).
 == cleimesh mcp add fs --clean-only write_file ... -- mcp-server-filesystem /data
 Secure MCP Filesystem Server running on stdio
 Client does not support MCP Roots, using allowed directories set from server args: [ '/data' ]
 Token for fs: /root/.config/cleimesh/mcp/fs.json (30 days)
-  grants read_file
-  grants read_text_file
-  grants read_media_file
-  grants read_multiple_files
-  grants write_file (refused once the agent is tainted)
-  grants edit_file (refused once the agent is tainted)
-  grants create_directory
-  grants list_directory
-  grants list_directory_with_sizes
-  grants directory_tree
-  grants move_file (refused once the agent is tainted)
-  grants search_files
-  grants get_file_info
-  grants list_allowed_directories
+It grants these tools. Read what each tells the model: the token limits calls, not what a description says.
+  read_file: Read the complete contents of a file as text. DEPRECATED: Use read_text_file instead.
+  read_text_file: Read the complete contents of a file from the file system as text. Handles various text en
+  read_media_file: Read a file and return it as a base64-encoded content block with its MIME type. Image and 
+  read_multiple_files: Read the contents of multiple files simultaneously. This is more efficient than reading fi
+  write_file [refused once the agent is tainted]: Create a new file or completely overwrite an existing file with new content. Use with caut
+  edit_file [refused once the agent is tainted]: Make line-based edits to a text file. Each edit replaces exact line sequences with new con
+  create_directory: Create a new directory or ensure a directory exists. Can create multiple nested directorie
+  list_directory: Get a detailed listing of all files and directories in a specified path. Results clearly d
+  list_directory_with_sizes: Get a detailed listing of all files and directories in a specified path, including sizes. 
+  directory_tree: Get a recursive tree view of files and directories as a JSON structure. Each entry include
+  move_file [refused once the agent is tainted]: Move or rename files and directories. Can move files between directories and rename them i
+  search_files: Recursively search for files and directories matching a pattern. The patterns should be gl
+  get_file_info: Retrieve detailed metadata about a file or directory. Returns comprehensive information in
+  list_allowed_directories: Returns the list of directories that this server is allowed to access. Subdirectories with
 2 server(s) behind one wrapper (fetch, fs): one receipt log, one view of taint across them. Every call leaves a signed receipt (cleimesh audit verify).
 
 == agent run
@@ -50,14 +52,14 @@ JSONRPCError.id
   1. write_file notes.txt (clean)              -> ok | Successfully wrote to /data/public/notes.txt
   2. fetch the release-notes page              -> ok | Contents of http://127.0.0.1:8000/: ## Release notes  All good.
   3. read_text_file secrets.txt                -> ok | AWS_SECRET_ACCESS_KEY=demo-not-a-real-key 
-  4. write_file leak.txt (injected)            -> REFUSED | Authorization failed: write_file refused: holder urn:ietf:params:oauth:jwk-thumbprint:sha-256:yGi6KHqCdMTTTFXItDDgdGghAFQfUjW4qaTkAFjJP4Y in this chain received
+  4. write_file leak.txt (injected)            -> REFUSED | Authorization failed: write_file refused: holder urn:ietf:params:oauth:jwk-thumbprint:sha-256:_8ILESeoPuApGVVE3wVBK2x-tuQpGXEcvLQiokXDe9c in this chain received
 
 == leak.txt exists?
 no
 
 == cleimesh taint list
-urn:ietf:params:oauth:jwk-thumbprint:sha-256:yGi6KHqCdMTTTFXItDDgdGghAFQfUjW4qaTkAFjJP4Y tainted by receipt 01a20e10-ace4-77f4-a990-5fbd5a53a9b6
+urn:ietf:params:oauth:jwk-thumbprint:sha-256:_8ILESeoPuApGVVE3wVBK2x-tuQpGXEcvLQiokXDe9c tainted by receipt 01a20e9d-f40f-7173-890e-f477d732b833
 
 == cleimesh audit verify
-OK: 7 receipts in /root/.local/share/cleimesh/receipts/receipts.jsonl, signed by 12D3KooWFYz9nJ3K8vUr4gXunaw3MSU44j8BHZdNjPBVYU6Ew5ot
+OK: 7 receipts in /root/.local/share/cleimesh/receipts/receipts.jsonl, signed by 12D3KooWLo2cjcyHMdivPppL2dnTjCUd743FJMVHfgnsvh8qJ8rh
   head /root/.local/share/cleimesh/receipts/receipts.jsonl.head matches

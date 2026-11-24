@@ -1286,6 +1286,19 @@ async fn mcp_add(a: McpAdd) -> Result<()> {
         }
         a.tools.clone()
     };
+    // What the granted tools tell the model, before anything is issued.
+    // Invisible characters refuse the add: they hide text from the person
+    // approving. Suspicious phrases are shown for that person to read.
+    let granted_tools: Vec<&rmcp::model::Tool> = listed.iter().filter(|t| granted.iter().any(|g| *g == t.name)).collect();
+    let reviews: Vec<(&rmcp::model::Tool, mcp::Review)> = granted_tools.iter().map(|t| (*t, mcp::review(t))).collect();
+    if let Some((tool, r)) = reviews.iter().find(|(_, r)| !r.hidden.is_empty()) {
+        return Err(fail(format!(
+            "{} carries invisible characters ({}): a tool definition has no use for them, and they hide text from whoever approves it. \
+             Leave the tool out with --tool, or don't add this server",
+            tool.name,
+            r.hidden.join(", ")
+        )));
+    }
     let pins: std::collections::BTreeMap<String, String> =
         listed.iter().filter(|t| granted.iter().any(|g| *g == t.name)).map(|t| (t.name.to_string(), mcp::tool_pin(t))).collect();
     if granted.is_empty() {
@@ -1338,9 +1351,14 @@ async fn mcp_add(a: McpAdd) -> Result<()> {
     }
 
     eprintln!("Token for {}: {} ({} days)", a.name, token_path.display(), a.ttl / 86_400);
-    for t in &granted {
-        let flag = grants.get(t).map(|g| if g.taints { " (taints the agent)" } else if g.clean_only { " (refused once the agent is tainted)" } else { "" }).unwrap_or("");
-        eprintln!("  grants {}{}", t, flag);
+    eprintln!("It grants these tools. Read what each tells the model: the token limits calls, not what a description says.");
+    for (tool, r) in &reviews {
+        let label = grants.get(tool.name.as_ref()).map(|g| if g.taints { " [taints the agent]" } else if g.clean_only { " [refused once the agent is tainted]" } else { "" }).unwrap_or("");
+        let first = tool.description.as_deref().and_then(|d| d.lines().map(str::trim).find(|l| !l.is_empty())).unwrap_or("(no description)");
+        eprintln!("  {}{}: {}", tool.name, label, first.chars().take(90).collect::<String>());
+        for flag in &r.flags {
+            eprintln!("    ! {}", flag.chars().take(160).collect::<String>());
+        }
     }
     eprintln!(
         "{} server(s) behind one wrapper ({}): one receipt log, one view of taint across them. Every call leaves a signed receipt (cleimesh audit verify).",

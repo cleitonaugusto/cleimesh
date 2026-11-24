@@ -151,8 +151,14 @@ granted directory, file names never. Tests: `cleimesh-p2p/tests/report.rs`,
   wrote them. The token limits which tools and arguments get through, not
   what their descriptions tell the model. `cleimesh mcp add` pins each
   granted tool's definition, and the wrapper stops offering a tool whose
-  definition changed since (a "rug pull") until a human adds it again; a
-  description that was already hostile when it was added still gets through.
+  definition changed since (a "rug pull") until a human adds it again. At
+  `mcp add`, a definition carrying invisible or formatting characters
+  (zero-width, bidi controls, Unicode tag characters) anywhere, parameter
+  descriptions included, is refused: they hide text from whoever approves
+  it. The command also prints what each granted tool tells the model and
+  marks phrases injected instructions tend to use; that list is a reading
+  aid, not a control, since rewording beats it. A visibly hostile
+  description that the person approving doesn't read still gets through.
 - **Taint across nodes.** Each node keeps its own view. The same token used
   on two nodes, or on two `mcp serve` or `mcp wrap` processes with different
   logs, is tainted separately. Servers added with `cleimesh mcp add` run

@@ -77,6 +77,12 @@ jobs:
     if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') }}
     needs: build
     runs-on: ubuntu-latest
+    # Signed build provenance for every binary (Sigstore, through GitHub):
+    # `gh attestation verify <file> --repo cleitonaugusto/cleimesh`.
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -90,6 +96,9 @@ jobs:
           done
           ls dist
           cp scripts/install.sh dist/
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'dist/cleimesh-*'
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*

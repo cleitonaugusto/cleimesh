@@ -810,7 +810,7 @@ impl CleiMeshNode {
     /// `external` (`cleimesh mcp wrap`, M5). Nothing confines such a server,
     /// so a chain granting the tool directories or network is refused: those
     /// grants could not be enforced, and the receipt would claim them.
-    fn admit_to(&mut self, peer: &PeerId, caller: &str, request: &ToolRequest, external: Option<&str>) -> std::result::Result<(receipts::Outcome, SandboxConfig), ToolResponse> {
+    fn admit_to(&mut self, peer: &PeerId, caller: &str, request: &ToolRequest, external: Option<(&str, Option<&str>)>) -> std::result::Result<(receipts::Outcome, SandboxConfig), ToolResponse> {
         let refuse = |error: String| ToolResponse {
             request_id: request.request_id.clone(),
             success: false,
@@ -841,7 +841,7 @@ impl CleiMeshNode {
         };
 
         let (decision, outcome) = match external {
-            Some(server_sha256) => call.allowed(&authority, None, receipts::external_terms(server_sha256, &sandbox)),
+            Some((server_sha256, definition)) => call.allowed(&authority, None, receipts::external_terms(server_sha256, definition, &sandbox)),
             None => {
                 // Every run sees a frozen clock and seeded randomness, recorded in the
                 // decision receipt, so an auditor can replay it (C4).
@@ -883,13 +883,15 @@ impl CleiMeshNode {
     /// call instead of the WASM sandbox, under the token's time limit.
     /// `server_sha256` names the server in the receipts (its command line
     /// may carry secrets, so only its digest is recorded).
-    pub async fn run_external<F, Fut>(&mut self, caller: &str, request: ToolRequest, server_sha256: &str, run: F) -> ToolResponse
+    /// `definition_sha256` is the digest of the tool definition the agent was
+    /// shown, so the receipt says which bytes were approved, not only a name.
+    pub async fn run_external<F, Fut>(&mut self, caller: &str, request: ToolRequest, server_sha256: &str, definition_sha256: Option<&str>, run: F) -> ToolResponse
     where
         F: FnOnce(ToolRequest) -> Fut,
         Fut: std::future::Future<Output = ToolResponse>,
     {
         let me = self.local_peer_id;
-        let (outcome, sandbox) = match self.admit_to(&me, caller, &request, Some(server_sha256)) {
+        let (outcome, sandbox) = match self.admit_to(&me, caller, &request, Some((server_sha256, definition_sha256))) {
             Ok(admitted) => admitted,
             Err(response) => return response,
         };

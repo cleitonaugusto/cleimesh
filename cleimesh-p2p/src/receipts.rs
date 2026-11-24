@@ -353,11 +353,12 @@ pub(crate) fn sandbox_terms(config: &SandboxConfig) -> Value {
 /// What a call to a native MCP server runs under (`cleimesh mcp wrap`):
 /// nothing confines it, so it reaches whatever the server's OS user can,
 /// and it can't be replayed. Only the time limit is enforced.
-pub(crate) fn external_terms(server_sha256: &str, config: &SandboxConfig) -> Value {
+pub(crate) fn external_terms(server_sha256: &str, definition_sha256: Option<&str>, config: &SandboxConfig) -> Value {
     json!({
         "confined": false,
         "runs_in": "native MCP server",
         "server_sha256": server_sha256,
+        "tool_definition_sha256": definition_sha256,
         "replayable": false,
         "not_replayable_because": ["native MCP server outside the sandbox"],
         "replay": null,

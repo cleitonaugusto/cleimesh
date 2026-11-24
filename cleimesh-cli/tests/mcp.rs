@@ -403,6 +403,7 @@ async fn mcp_wrap_passes_on_only_what_the_token_grants_and_receipts_it() {
     assert_eq!(terms["confined"], false);
     assert_eq!(terms["replayable"], false);
     assert_eq!(terms["runs_in"], "native MCP server");
+    assert_eq!(terms["tool_definition_sha256"].as_str().map(str::len), Some(64), "the receipt names the definition the agent was shown");
     assert!(!log.contains(&path(&inner_chain)), "the wrapped command line leaked into the receipts");
 }
 
@@ -569,7 +570,14 @@ async fn a_tool_whose_definition_changed_since_mcp_add_is_not_offered() {
     let client = ().serve(transport).await.unwrap();
     let tools: Vec<String> = client.list_all_tools().await.unwrap().iter().map(|t| t.name.to_string()).collect();
     assert_eq!(tools, ["json_transform"], "a changed tool was offered");
+    // The receipt names the bytes that were approved, not only the tool's name.
+    let call = |name: &str, a: Value| CallToolRequestParams::new(name.to_string()).with_arguments(args(a));
+    let ok = client.call_tool(call("json_transform", json!({"data": {"a": 1}, "filter": ".a"}))).await.unwrap();
+    assert_eq!(ok.is_error, Some(false), "{}", text(&ok));
     client.cancel().await.unwrap();
+    let log = std::fs::read_to_string(k("r.jsonl")).unwrap();
+    let allowed: Vec<Value> = log.lines().map(|l| serde_json::from_str::<Value>(l).unwrap()).filter(|r| r["params"]["decision"] == "allowed").collect();
+    assert_eq!(allowed.last().unwrap()["params"]["sandbox"]["tool_definition_sha256"], servers["servers"]["srv"]["pins"]["json_transform"]);
     let mut said = String::new();
     tokio::io::AsyncReadExt::read_to_string(&mut stderr.unwrap(), &mut said).await.unwrap();
     assert!(said.contains("echo of srv changed since it was added"), "{said}");

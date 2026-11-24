@@ -279,8 +279,9 @@ impl ServerHandler for Gateway {
 pub struct Wrapper {
     node: Mutex<CleiMeshNode>,
     backends: Vec<Wrapped>,
-    /// Tool name → the backend that offers it.
-    route: std::collections::HashMap<String, usize>,
+    /// Tool name → the backend that offers it, and the digest (`tool_pin`)
+    /// of the definition the agent was shown, which each receipt names.
+    route: std::collections::HashMap<String, (usize, String)>,
     credentials: Option<(Vec<Vec<String>>, aat::SigningKey)>,
     audience: String,
     tools: Vec<Tool>,
@@ -316,8 +317,8 @@ impl Wrapper {
             };
             let offered = backend.server.list_all_tools().await.map_err(|e| format!("cannot list the tools of {}: {}", backend.name, e))?;
             for tool in offered.into_iter().filter(|t| granted.iter().any(|g| *g == t.name)) {
+                let now = tool_pin(&tool);
                 if let Some(pins) = &backend.pins {
-                    let now = tool_pin(&tool);
                     if pins.get(tool.name.as_ref()) != Some(&now) {
                         eprintln!(
                             "cleimesh mcp wrap: {} of {} changed since it was added (definition sha256 {}), so it is not offered; \
@@ -327,7 +328,7 @@ impl Wrapper {
                         continue;
                     }
                 }
-                if let Some(j) = route.insert(tool.name.to_string(), i) {
+                if let Some((j, _)) = route.insert(tool.name.to_string(), (i, now)) {
                     return Err(format!("tool {} is offered by both {} and {}; grant it from one of them only", tool.name, backends[j].name, backend.name));
                 }
                 tools.push(tool);
@@ -357,7 +358,8 @@ impl ServerHandler for Wrapper {
         let call_context = call_context(Some(&context.meta.0 .0)).or_else(|| call_context(request.meta.as_ref().map(|m| &m.0 .0)));
         let arguments = request.arguments.clone();
         let args = serde_json::Value::Object(arguments.clone().unwrap_or_default());
-        let route = self.route.get(&tool).map(|i| &self.backends[*i]);
+        let definition = self.route.get(&tool).map(|(_, d)| d.as_str());
+        let route = self.route.get(&tool).map(|(i, _)| &self.backends[*i]);
         // A server listed with its own token is called under that token only:
         // another server's chain granting the same name must not stand in for
         // it, with different constraints or taint flags.
@@ -390,7 +392,7 @@ impl ServerHandler for Wrapper {
             };
             cleimesh_p2p::ToolResponse { request_id: request.request_id, success, output, error }
         };
-        let response = self.node.lock().await.run_external(CALLER, request, &backend.server_sha256, run).await;
+        let response = self.node.lock().await.run_external(CALLER, request, &backend.server_sha256, definition, run).await;
         // The server's own result, error or not, goes back as it gave it.
         if let Ok(result) = serde_json::from_value::<CallToolResult>(response.output.clone()) {
             return Ok(result.into());

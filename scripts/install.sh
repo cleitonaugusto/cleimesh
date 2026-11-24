@@ -53,5 +53,5 @@ case ":$PATH:" in
   *":$DIR:"*) ;;
   *) echo "Add $DIR to your PATH: export PATH=\"$DIR:\$PATH\"" ;;
 esac
-echo "Next: cleimesh token issue \$(cleimesh id --client) --tool file_read --read <your project> -o chain.json"
-echo "      claude mcp add cleimesh -- cleimesh mcp serve --token chain.json"
+echo "Next: cleimesh demo redirect      # an attack refused, in ten seconds"
+echo "      cleimesh mcp add <name> -- <your MCP server command>"

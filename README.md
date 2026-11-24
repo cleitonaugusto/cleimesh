@@ -30,6 +30,8 @@ cleimesh mcp add fetch --taints fetch -- uvx mcp-server-fetch
 cleimesh mcp add fs --clean-only write_file -- npx -y @modelcontextprotocol/server-filesystem ~/work
 ```
 
+![Two official MCP servers added with one command each; the agent fetches a poisoned page, reads a secret, and its write of the secret is refused on the other server; the receipts say why](examples/mcp-add/mcp-add.gif)
+
 Each server now sits behind a signed token, and every call leaves a signed receipt. Once the agent reads a page through `fetch`, it can't write through the filesystem server until a human clears it: what it reads in one server limits what it can do in another ([tested with the official servers](examples/mcp-add/README.md)). More in [Put an existing MCP server behind a token](#put-an-existing-mcp-server-behind-a-token).
 
 ## Give your agent an allowance

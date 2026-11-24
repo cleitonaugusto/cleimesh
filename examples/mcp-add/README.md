@@ -9,6 +9,8 @@ cleimesh mcp add fetch --taints fetch -- python -m mcp_server_fetch
 cleimesh mcp add fs --clean-only write_file --clean-only edit_file --clean-only move_file -- mcp-server-filesystem /data
 ```
 
+![Two official MCP servers added with one command each; the agent fetches a poisoned page, reads a secret, and its write of the secret is refused on the other server; taint list and audit verify show why](mcp-add.gif)
+
 A scripted agent (no model; it does what an injected one would) writes a draft, fetches a page carrying a
 hidden instruction, reads a secret, and tries to write it where the instruction says. The fetch taints the
 agent, so the write is refused on the other server, and every step is on a signed receipt
@@ -28,6 +30,9 @@ The page is served inside the container and the secret is fake; nothing leaves i
 cp "$(command -v cleimesh)" examples/mcp-add/
 docker build -t cleimesh-mcp-add examples/mcp-add && docker run --rm cleimesh-mcp-add
 ```
+
+The GIF is `gif.sh` recorded with asciinema and rendered with agg; it shortens key identifiers and drops the
+per-tool grant list for the screen. `run.sh` prints everything.
 
 The `Received exception from stream ... validation errors` lines in the transcript come from
 `mcp-server-fetch` itself: on its first fetch it installs its npm helpers and npm's output lands on the

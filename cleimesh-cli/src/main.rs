@@ -288,7 +288,8 @@ enum McpCommands {
         /// With --allowance: the agent's key, the allowance holder.
         #[arg(long, value_name = "FILE")]
         agent: Option<PathBuf>,
-        /// With --allowance: spend ledger across restarts (calls, amount spent).
+        /// With --allowance: spend ledger kept across restarts (calls, amount
+        /// spent), locked by this process (default: <data dir>/cleimesh/allowance/ledger.json)
         #[arg(long, value_name = "FILE")]
         ledger: Option<PathBuf>,
         /// Wrap every server listed in this file (from `cleimesh mcp add`),

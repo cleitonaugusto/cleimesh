@@ -144,27 +144,39 @@ pub fn grant(
     Ok(())
 }
 
-/// The spend ledger on disk, so a restart keeps the budget.
+/// The spend ledger on disk, so a restart keeps the budget. One process
+/// holds it at a time: two gateways each counting from their own copy would
+/// both spend the cap.
 pub struct LedgerStore {
-    path: Option<PathBuf>,
+    path: PathBuf,
+    _lock: std::fs::File,
 }
 
 impl LedgerStore {
-    pub fn new(path: Option<PathBuf>) -> Self {
-        LedgerStore { path }
+    pub fn open(path: PathBuf) -> Result<Self> {
+        if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+            std::fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
+        }
+        let lock_path = path.with_extension("lock");
+        let lock = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(&lock_path).with_context(|| format!("cannot open {}", lock_path.display()))?;
+        lock.try_lock().map_err(|e| match e {
+            std::fs::TryLockError::WouldBlock => anyhow!("{} is in use by another gateway; give each its own --ledger, or stop the other", path.display()),
+            std::fs::TryLockError::Error(e) => anyhow!("cannot lock {}: {e}", lock_path.display()),
+        })?;
+        Ok(LedgerStore { path, _lock: lock })
     }
 
     fn load(&self) -> Result<Ledger> {
         let mut ledger = Ledger::new();
-        if let Some(path) = self.path.as_ref().filter(|p| p.exists()) {
-            let usage: BTreeMap<String, (u32, f64)> = read_json(path)?;
+        if self.path.exists() {
+            let usage: BTreeMap<String, (u32, f64)> = read_json(&self.path)?;
             ledger.restore(usage);
         }
         Ok(ledger)
     }
 
     fn save(&self, ledger: &Ledger) -> Result<()> {
-        let Some(path) = &self.path else { return Ok(()) };
+        let path = &self.path;
         let tmp = path.with_extension("tmp");
         std::fs::write(&tmp, serde_json::to_vec(&ledger.snapshot())?)?;
         std::fs::rename(&tmp, path)?;
@@ -300,15 +312,44 @@ pub async fn wrap(
     let allowance: AllowanceFile = read_json(&allowance)?;
     let agent = load_key(&agent)?;
     let owner: Jwk = read_json(&owner)?;
-    if ledger.is_none() {
-        eprintln!("cleimesh allowance wrap: no --ledger, so a restart resets the call count and the spending cap");
-    }
+    // Kept across restarts by default: an MCP client restarts its servers
+    // every session, and a cap that resets with them is no cap.
+    let ledger = match ledger {
+        Some(path) => path,
+        None => directories::ProjectDirs::from("", "", "cleimesh")
+            .map(|d| d.data_dir().join("allowance").join("ledger.json"))
+            .ok_or_else(|| anyhow!("cannot find a data directory; pass --ledger <file>"))?,
+    };
+    let store = LedgerStore::open(ledger)?;
     let mut child = tokio::process::Command::new(&command[0]);
     child.args(&command[1..]);
     let transport = rmcp::transport::TokioChildProcess::new(child).map_err(|e| anyhow!("cannot start {}: {e}", command[0]))?;
     let server = ().serve(transport).await.map_err(|e| anyhow!("{} did not start as an MCP server: {e}", command[0]))?;
-    let gateway = AllowanceGateway::new(server, allowance, agent, owner, LedgerStore::new(ledger), receipts).await?;
+    let gateway = AllowanceGateway::new(server, allowance, agent, owner, store, receipts).await?;
     let service = gateway.serve(rmcp::transport::stdio()).await.map_err(|e| anyhow!("MCP server failed to start: {e}"))?;
     service.waiting().await.map_err(|e| anyhow!("MCP server stopped: {e}"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_ledger_survives_a_restart_and_has_one_holder() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sub").join("ledger.json");
+        {
+            let store = LedgerStore::open(path.clone()).unwrap();
+            // A second gateway on the same ledger would count from its own copy.
+            let second = LedgerStore::open(path.clone()).err().expect("a second holder was let in");
+            assert!(second.to_string().contains("in use by another gateway"), "{second}");
+            let mut ledger = store.load().unwrap();
+            ledger.restore([("jti-1".to_string(), (2, 4.0))]);
+            store.save(&ledger).unwrap();
+        }
+        // The process is gone: its lock with it, its spend kept.
+        let store = LedgerStore::open(path).unwrap();
+        assert_eq!(store.load().unwrap().usage("jti-1"), (2, 4.0));
+    }
 }

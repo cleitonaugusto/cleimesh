@@ -21,6 +21,16 @@
   <b>Por que ele é construído assim, os ataques que ele barra e os erros do caminho.</b>
 </p>
 
+## Qualquer servidor MCP, um comando
+
+```sh
+curl -fsSL https://github.com/cleitonaugusto/cleimesh/releases/latest/download/install.sh | sh
+cleimesh mcp add fetch --taints fetch -- uvx mcp-server-fetch
+cleimesh mcp add fs --clean-only write_file -- npx -y @modelcontextprotocol/server-filesystem ~/trabalho
+```
+
+Cada servidor passa a ficar atrás de um token assinado, e cada chamada deixa um recibo assinado. Depois que o agente lê uma página pelo `fetch`, ele não consegue gravar pelo servidor de arquivos até um humano liberar: o que ele lê num servidor limita o que ele faz em outro ([testado com os servidores oficiais](examples/mcp-add/README.md), em inglês). Mais em [Pôr um servidor MCP existente atrás de um token](#pôr-um-servidor-mcp-existente-atrás-de-um-token).
+
 Agentes de IA (Claude Code, Cursor, LangGraph, CrewAI...) chamam tools de terceiros e delegam tarefas a outros agentes, quase sempre **com todas as suas permissões**. Uma tool maliciosa, ou uma prompt injection escondida num e-mail que o agente leu, pode ler `~/.ssh` e `.env`, apagar arquivos ou vazar dados. E depois ninguém consegue provar qual agente fez o quê, em nome de quem.
 
 A maioria das ferramentas da área checa a permissão **na porta** (um proxy ou gateway) e depois deixa a tool rodar com acesso total, e os logs de auditoria pedem que você confie em quem os assinou. O CleiMesh junta cinco peças:
@@ -142,8 +152,22 @@ Testado em containers descartáveis com um modelo roteirizado no lugar de um LLM
 
 ### Pôr um servidor MCP existente atrás de um token
 
+Um comando, sem configurar nada: ele cria as chaves se faltarem, pergunta ao servidor quais ferramentas ele tem, emite um token só para elas e registra no Claude Code:
+
 ```sh
 # O servidor fetch como único caminho do agente para a web, contaminando o que ele traz
+cleimesh mcp add fetch --taints fetch -- uvx mcp-server-fetch
+# Um servidor de arquivos cujas escritas são recusadas depois que o agente leu a web
+cleimesh mcp add fs --clean-only write_file --clean-only edit_file -- npx -y @modelcontextprotocol/server-filesystem ~/trabalho
+```
+
+Todo servidor adicionado roda atrás de uma única entrada `cleimesh-mcp`: um nó, um log de recibos e uma visão só da contaminação para todos eles, então uma página lida pelo `fetch` barra o `write_file` do servidor de arquivos. `--tool` concede menos ferramentas do que o servidor lista, e `--print` imprime a linha e uma entrada JSON para o Cursor e outros clientes em vez de chamar o `claude`. Os tokens valem 30 dias; rode o comando de novo para renovar. Chamadas a um servidor embrulhado têm 60 segundos, a menos que o token diga menos.
+
+Testado num container com o `mcp-server-fetch` e o `@modelcontextprotocol/server-filesystem` oficiais ([examples/mcp-add](examples/mcp-add/README.md), em inglês): o agente busca uma página com uma injeção, lê um segredo, e o `write_file` desse segredo é recusado, com a recusa num recibo assinado.
+
+O mesmo à mão, com restrições de argumento:
+
+```sh
 cleimesh token issue <agente> --tool fetch --taints -o fetch.json
 claude mcp add fetch -- cleimesh mcp wrap --token fetch.json -- uvx mcp-server-fetch
 ```

@@ -22,6 +22,16 @@
   <b>Why it is built this way, the attacks it stops, and the mistakes made on the way.</b>
 </p>
 
+## Any MCP server, one command
+
+```sh
+curl -fsSL https://github.com/cleitonaugusto/cleimesh/releases/latest/download/install.sh | sh
+cleimesh mcp add fetch --taints fetch -- uvx mcp-server-fetch
+cleimesh mcp add fs --clean-only write_file -- npx -y @modelcontextprotocol/server-filesystem ~/work
+```
+
+Each server now sits behind a signed token, and every call leaves a signed receipt. Once the agent reads a page through `fetch`, it can't write through the filesystem server until a human clears it: what it reads in one server limits what it can do in another ([tested with the official servers](examples/mcp-add/README.md)). More in [Put an existing MCP server behind a token](#put-an-existing-mcp-server-behind-a-token).
+
 ## Give your agent an allowance
 
 Your agent is stuck in a demo because you can't trust it with anything real: money, prod, a customer's data. Hand it a **signed allowance** — one tool, one recipient, up to an amount, for a number of calls — and it acts on its own inside the limit, while a prompt-injected or malicious agent can't widen it or lie about it, because the limit is enforced outside the agent, not asked of it.

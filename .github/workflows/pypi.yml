@@ -43,6 +43,9 @@ jobs:
           path: dist
   publish:
     needs: wheels
+    # A wheel job the runner pool cancelled doesn't hold back the others;
+    # a failed one does. Files already on PyPI are skipped.
+    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') }}
     runs-on: ubuntu-latest
     environment: pypi
     permissions:

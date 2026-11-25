@@ -117,6 +117,14 @@ enum Commands {
     /// tools until a human clears them. Run with the node stopped
     #[command(subcommand)]
     Taint(TaintCommands),
+    /// Decide one call under flow labels, offline: the node's own rule (the
+    /// chain must attenuate; a tainted chain calling a clean-only tool must fit
+    /// every link's when_tainted). Reads JSON on stdin: {"links": [labels or
+    /// null, root first], "tainted": bool, "tool": name, "arguments": {...}};
+    /// prints {"decision": "permit"|"deny", "reason": ...}. For harnesses
+    /// (benchmarks, conformance vectors) that measure the policy itself.
+    #[command(name = "flow-check")]
+    FlowCheck,
     /// Execution receipts: check and read what a node recorded
     #[command(subcommand)]
     Audit(AuditCommands),
@@ -807,6 +815,7 @@ async fn run(cli: Cli) -> Result<()> {
             }
         },
         Commands::Taint(cmd) => taint(cmd)?,
+        Commands::FlowCheck => flow_check()?,
         Commands::Demo { name, server } => demo::run(&name, server).await?,
         Commands::Audit(cmd) => match cmd {
             AuditCommands::Verify { receipts, identity, head } => audit_verify(receipts, identity, head)?,
@@ -2072,6 +2081,42 @@ async fn capability_grant(
         }
         None => println!("{}", json),
     }
+    Ok(())
+}
+
+/// `cleimesh flow-check`: one decision from the node's flow-label rule.
+fn flow_check() -> Result<()> {
+    let mut input = String::new();
+    std::io::Read::read_to_string(&mut std::io::stdin(), &mut input)?;
+    let req: serde_json::Value = serde_json::from_str(&input).map_err(|e| anyhow::anyhow!("invalid input: {}", e))?;
+    let tool = req["tool"].as_str().ok_or_else(|| anyhow::anyhow!("missing tool"))?;
+    let decide = || -> std::result::Result<(), String> {
+        let jwk = aat::Jwk::from_key(&aat::SigningKey::from_bytes(&[9; 32]).verifying_key());
+        let mut chain = Vec::new();
+        for labels in req["links"].as_array().ok_or("missing links")? {
+            let mut details = vec![serde_json::json!({"type": "attenuating_agent_token", "tools": {tool: {}}})];
+            if !labels.is_null() {
+                let grant: cleimesh_p2p::grants::ToolGrant = serde_json::from_value(labels.clone()).map_err(|e| e.to_string())?;
+                details.push(cleimesh_p2p::grants::entry(&cleimesh_p2p::grants::Grants::from([(tool.to_string(), grant)])));
+            }
+            let claims: aat::Claims = serde_json::from_value(serde_json::json!({
+                "jti": "j", "iss": "urn:x", "iat": 0, "exp": 1, "cnf": {"jwk": jwk},
+                "del_depth": 0, "del_max_depth": 3, "authorization_details": details,
+            }))
+            .map_err(|e| e.to_string())?;
+            chain.push(claims);
+        }
+        let (leaf, _) = cleimesh_p2p::grants::effective(&chain, tool)?;
+        if req["tainted"] == true && leaf.clean_only {
+            cleimesh_p2p::grants::tainted_admits(&chain, tool, &req["arguments"])?;
+        }
+        Ok(())
+    };
+    let out = match decide() {
+        Ok(()) => serde_json::json!({"decision": "permit"}),
+        Err(reason) => serde_json::json!({"decision": "deny", "reason": reason}),
+    };
+    println!("{}", out);
     Ok(())
 }
 

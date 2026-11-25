@@ -1,7 +1,9 @@
 name: npm
-# Publishes the npm launcher for a release: it downloads that release's binary
+# Stages the npm launcher for a release: it downloads that release's binary
 # on first use and checks it against the checksums set here. Trusted
-# publishing with provenance (no token stored). Run by hand for a release tag.
+# publishing with provenance (no token stored). The version is staged, not
+# published: the owner approves it on npmjs.com (Staged Packages) with 2FA.
+# Run by hand for a release tag.
 on:
   workflow_dispatch:
     inputs:
@@ -29,5 +31,5 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
       - run: packaging/npm/prepare.sh "${{ inputs.tag }}"
-      - run: npm publish --provenance --access public
+      - run: npm stage publish --provenance --access public
         working-directory: packaging/npm

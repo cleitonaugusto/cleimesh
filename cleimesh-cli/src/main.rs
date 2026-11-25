@@ -338,6 +338,10 @@ enum McpCommands {
         /// (repeatable). E.g. send_email.recipients=boss@corp.test
         #[arg(long = "when-tainted", value_name = "TOOL.ARG=VALUES")]
         when_tainted: Vec<String>,
+        /// Don't infer --taints/--clean-only from the hints the server declares
+        /// on its tools (inferred only when neither flag is given)
+        #[arg(long)]
+        no_auto_labels: bool,
         /// Register the wrapper with --approvals DIR: refused tainted calls
         /// wait there for a person to approve each one
         #[arg(long, value_name = "DIR")]
@@ -793,8 +797,8 @@ async fn run(cli: Cli) -> Result<()> {
                 None => mcp_wrap(token, holder, identity, receipts, servers, approvals, command).await?,
             }
         }
-        Commands::Mcp(McpCommands::Add { name, tools, taints, clean_only, when_tainted, approvals, ttl, scope, print, dir, holder, identity, receipts, command }) => {
-            mcp_add(McpAdd { name, tools, taints, clean_only, when_tainted, approvals, ttl, scope, print, dir, holder, identity, receipts, command }).await?
+        Commands::Mcp(McpCommands::Add { name, tools, taints, clean_only, when_tainted, no_auto_labels, approvals, ttl, scope, print, dir, holder, identity, receipts, command }) => {
+            mcp_add(McpAdd { name, tools, taints, clean_only, when_tainted, no_auto_labels, approvals, ttl, scope, print, dir, holder, identity, receipts, command }).await?
         }
         Commands::Allowance(cmd) => match cmd {
             AllowanceCommands::Keygen { out } => allowance::keygen(&out)?,
@@ -1272,6 +1276,7 @@ struct McpAdd {
     taints: Vec<String>,
     clean_only: Vec<String>,
     when_tainted: Vec<String>,
+    no_auto_labels: bool,
     approvals: Option<PathBuf>,
     ttl: i64,
     scope: String,
@@ -1286,7 +1291,7 @@ struct McpAdd {
 /// `cleimesh mcp add`: keys, the server's tool list, a token for it, an entry
 /// in servers.json, and the one `mcp wrap --servers` line registered with the
 /// client.
-async fn mcp_add(a: McpAdd) -> Result<()> {
+async fn mcp_add(mut a: McpAdd) -> Result<()> {
     use rmcp::ServiceExt;
     let fail = |m: String| -> cleimesh_core::CleiMeshError { anyhow::anyhow!(m).into() };
 
@@ -1343,6 +1348,54 @@ async fn mcp_add(a: McpAdd) -> Result<()> {
     }
     let pins: std::collections::BTreeMap<String, String> =
         listed.iter().filter(|t| granted.iter().any(|g| *g == t.name)).map(|t| (t.name.to_string(), mcp::tool_pin(t))).collect();
+    // No labels given: take them from the hints the server declares, and say
+    // where each came from. Explicit flags always win.
+    let mut inferred: std::collections::BTreeMap<String, &'static str> = Default::default();
+    let mut unlabeled = Vec::new();
+    let mut both = Vec::new();
+    if a.taints.is_empty() && a.clean_only.is_empty() && !a.no_auto_labels {
+        for t in &granted_tools {
+            match mcp::infer_label(t) {
+                (mcp::Inferred::Taints, why) => {
+                    a.taints.push(t.name.to_string());
+                    inferred.insert(t.name.to_string(), why);
+                }
+                (mcp::Inferred::CleanOnly, why) => {
+                    a.clean_only.push(t.name.to_string());
+                    inferred.insert(t.name.to_string(), why);
+                }
+                (mcp::Inferred::Both, why) => {
+                    // The hints can't tell reading from acting here: ask the
+                    // person when there is one at a terminal, else stay safe.
+                    let answer = if !a.print && std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+                        eprint!(
+                            "{} changes things and reaches an open world. Does it bring outside content in (r), act on the world (a), or both (b)? [b] ",
+                            t.name
+                        );
+                        let mut line = String::new();
+                        let _ = std::io::stdin().read_line(&mut line);
+                        line.trim().to_lowercase()
+                    } else {
+                        String::new()
+                    };
+                    match answer.as_str() {
+                        "r" => a.taints.push(t.name.to_string()),
+                        "a" => a.clean_only.push(t.name.to_string()),
+                        _ => {
+                            a.taints.push(t.name.to_string());
+                            a.clean_only.push(t.name.to_string());
+                            both.push(t.name.to_string());
+                        }
+                    }
+                    inferred.insert(t.name.to_string(), why);
+                }
+                (mcp::Inferred::Neither, why) => {
+                    inferred.insert(t.name.to_string(), why);
+                }
+                (mcp::Inferred::Unknown, _) => unlabeled.push(t.name.to_string()),
+            }
+        }
+    }
     if granted.is_empty() {
         return Err(fail(format!("{} lists no tools; nothing to grant", a.command[0])));
     }
@@ -1402,12 +1455,38 @@ async fn mcp_add(a: McpAdd) -> Result<()> {
     eprintln!("Token for {}: {} ({} days)", a.name, token_path.display(), a.ttl / 86_400);
     eprintln!("It grants these tools. Read what each tells the model: the token limits calls, not what a description says.");
     for (tool, r) in &reviews {
-        let label = grants.get(tool.name.as_ref()).map(|g| if g.taints { " [taints the agent]" } else if g.clean_only { " [refused once the agent is tainted]" } else { "" }).unwrap_or("");
+        let label = grants
+            .get(tool.name.as_ref())
+            .map(|g| match (g.taints, g.clean_only) {
+                (true, true) => " [taints the agent; refused once it is tainted]",
+                (true, false) => " [taints the agent]",
+                (false, true) => " [refused once the agent is tainted]",
+                _ => "",
+            })
+            .unwrap_or("");
         let first = tool.description.as_deref().and_then(|d| d.lines().map(str::trim).find(|l| !l.is_empty())).unwrap_or("(no description)");
-        eprintln!("  {}{}: {}", tool.name, label, first.chars().take(90).collect::<String>());
+        let from = inferred.get(tool.name.as_ref()).map(|why| format!(" (from the server's {})", why)).unwrap_or_default();
+        eprintln!("  {}{}{}: {}", tool.name, label, from, first.chars().take(90).collect::<String>());
         for flag in &r.flags {
             eprintln!("    ! {}", flag.chars().take(160).collect::<String>());
         }
+    }
+    if !inferred.is_empty() {
+        eprintln!("Labels above marked \"from the server's ...\" are the server's own hints: check them, or set yours with --taints/--clean-only.");
+    }
+    if !both.is_empty() {
+        eprintln!(
+            "{} act and reach an open world, so each may also bring outside content in: labelled both ways, the safe side. \
+             A tool labelled both is refused once the agent is tainted, reads included. Run `mcp add` at a terminal to answer per tool, \
+             or label them yourself: --taints for the ones that read, --clean-only for the ones that act.",
+            both.join(", ")
+        );
+    }
+    if !unlabeled.is_empty() {
+        eprintln!(
+            "No label for {}: the server declares no hint that decides it. If it brings outside content in, add --taints; if it acts, --clean-only.",
+            unlabeled.join(", ")
+        );
     }
     eprintln!(
         "{} server(s) behind one wrapper ({}): one receipt log, one view of taint across them. Every call leaves a signed receipt (cleimesh audit verify).",

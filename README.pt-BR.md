@@ -34,6 +34,8 @@ cleimesh mcp add fs --clean-only write_file -- npx -y @modelcontextprotocol/serv
 
 Cada servidor passa a ficar atrás de um token assinado, e cada chamada deixa um recibo assinado. Depois que o agente lê uma página pelo `fetch`, ele não consegue gravar pelo servidor de arquivos até um humano liberar: o que ele lê num servidor limita o que ele faz em outro ([testado com os servidores oficiais](examples/mcp-add/README.md), em inglês). Mais em [Pôr um servidor MCP existente atrás de um token](#pôr-um-servidor-mcp-existente-atrás-de-um-token).
 
+Sem `--taints` nem `--clean-only`, o `mcp add` tira os rótulos das dicas que o servidor declara nas tools (`readOnlyHint`, `destructiveHint`, `openWorldHint`) e diz de qual dica veio cada um. Uma tool que muda coisas e alcança um mundo aberto (ler e-mail pode marcá-lo como lido) recebe os dois rótulos, o lado seguro; num terminal, o `mcp add` pergunta o que ela faz. Uma tool sem dica que decida fica sem rótulo e é nomeada, para você decidir. `--no-auto-labels` desliga isso.
+
 Agentes de IA (Claude Code, Cursor, LangGraph, CrewAI...) chamam tools de terceiros e delegam tarefas a outros agentes, quase sempre **com todas as suas permissões**. Uma tool maliciosa, ou uma prompt injection escondida num e-mail que o agente leu, pode ler `~/.ssh` e `.env`, apagar arquivos ou vazar dados. E depois ninguém consegue provar qual agente fez o quê, em nome de quem.
 
 A maioria das ferramentas da área checa a permissão **na porta** (um proxy ou gateway) e depois deixa a tool rodar com acesso total, e os logs de auditoria pedem que você confie em quem os assinou. O CleiMesh junta cinco peças:

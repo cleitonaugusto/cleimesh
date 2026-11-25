@@ -34,6 +34,8 @@ cleimesh mcp add fs --clean-only write_file -- npx -y @modelcontextprotocol/serv
 
 Each server now sits behind a signed token, and every call leaves a signed receipt. Once the agent reads a page through `fetch`, it can't write through the filesystem server until a human clears it: what it reads in one server limits what it can do in another ([tested with the official servers](examples/mcp-add/README.md)). More in [Put an existing MCP server behind a token](#put-an-existing-mcp-server-behind-a-token).
 
+Without `--taints` or `--clean-only`, `mcp add` takes the labels from the hints the server declares on its tools (`readOnlyHint`, `destructiveHint`, `openWorldHint`) and says which hint each came from. A tool that both changes things and reaches an open world (reading mail can mark it read) gets both labels, the safe side; at a terminal, `mcp add` asks you which it does. A tool with no deciding hint is left unlabelled and named, for you to decide. `--no-auto-labels` turns this off.
+
 ## Give your agent an allowance
 
 Your agent is stuck in a demo because you can't trust it with anything real: money, prod, a customer's data. Hand it a **signed allowance** — one tool, one recipient, up to an amount, for a number of calls — and it acts on its own inside the limit, while a prompt-injected or malicious agent can't widen it or lie about it, because the limit is enforced outside the agent, not asked of it.

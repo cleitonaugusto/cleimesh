@@ -87,6 +87,45 @@ pub fn tool_pin(tool: &Tool) -> String {
     cleimesh_receipt::sha256_hex(&serde_json_canonicalizer::to_vec(&value).unwrap_or_default())
 }
 
+/// A flow label inferred from the hints a server declares on a tool
+/// (`readOnlyHint`, `destructiveHint`, `openWorldHint`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Inferred {
+    /// Brings outside content in: `--taints`.
+    Taints,
+    /// Changes things: `--clean-only`.
+    CleanOnly,
+    /// Changes things and reaches an open world, so it may also bring outside
+    /// content in (reading mail can mark it read): both. Safe by default; the
+    /// person narrows it if the tool only acts.
+    Both,
+    /// Declared read-only over a closed world: neither.
+    Neither,
+    /// Declares nothing that decides it: left to the person.
+    Unknown,
+}
+
+/// Infers a tool's flow label from the hints its server declares, and says
+/// which. Only declared hints count: MCP's defaults for absent hints are
+/// pessimistic (writes, destructive, open world), so applying them would label
+/// every tool both ways. A hint is the server's claim, not a guarantee; the
+/// person adding the server reads the result.
+pub fn infer_label(tool: &Tool) -> (Inferred, &'static str) {
+    let Some(a) = tool.annotations.as_ref() else { return (Inferred::Unknown, "no hints") };
+    let writes = a.read_only_hint == Some(false) || (a.destructive_hint == Some(true) && a.read_only_hint != Some(true));
+    if writes && a.open_world_hint == Some(true) {
+        return (Inferred::Both, "not read-only, openWorldHint true");
+    }
+    match (a.read_only_hint, a.destructive_hint, a.open_world_hint) {
+        (Some(false), _, _) => (Inferred::CleanOnly, "readOnlyHint false"),
+        (_, Some(true), _) if a.read_only_hint != Some(true) => (Inferred::CleanOnly, "destructiveHint true"),
+        (Some(true), _, Some(false)) => (Inferred::Neither, "readOnlyHint true, openWorldHint false"),
+        (Some(true), _, _) => (Inferred::Taints, "readOnlyHint true, open world"),
+        (None, _, Some(true)) => (Inferred::Taints, "openWorldHint true"),
+        _ => (Inferred::Unknown, "hints don't decide it"),
+    }
+}
+
 /// What a tool's definition tells the model, read before it is granted.
 pub struct Review {
     /// Invisible or formatting characters, as `U+XXXX in <where>`. No tool
@@ -495,6 +534,23 @@ mod review_tests {
 
     fn tool(v: serde_json::Value) -> Tool {
         serde_json::from_value(v).unwrap()
+    }
+
+    #[test]
+    fn labels_come_only_from_hints_the_server_declares() {
+        let with = |hints: serde_json::Value| tool(serde_json::json!({"name": "t", "inputSchema": {"type": "object"}, "annotations": hints}));
+        assert_eq!(infer_label(&tool(serde_json::json!({"name": "t", "inputSchema": {"type": "object"}}))).0, Inferred::Unknown);
+        assert_eq!(infer_label(&with(serde_json::json!({}))).0, Inferred::Unknown);
+        assert_eq!(infer_label(&with(serde_json::json!({"readOnlyHint": false}))).0, Inferred::CleanOnly);
+        assert_eq!(infer_label(&with(serde_json::json!({"destructiveHint": true}))).0, Inferred::CleanOnly);
+        assert_eq!(infer_label(&with(serde_json::json!({"readOnlyHint": true, "destructiveHint": true}))).0, Inferred::Taints);
+        assert_eq!(infer_label(&with(serde_json::json!({"readOnlyHint": true}))).0, Inferred::Taints);
+        assert_eq!(infer_label(&with(serde_json::json!({"readOnlyHint": true, "openWorldHint": false}))).0, Inferred::Neither);
+        assert_eq!(infer_label(&with(serde_json::json!({"openWorldHint": true}))).0, Inferred::Taints);
+        assert_eq!(infer_label(&with(serde_json::json!({"openWorldHint": false}))).0, Inferred::Unknown);
+        // Reading mail that marks it read: writes, and brings outside content in.
+        assert_eq!(infer_label(&with(serde_json::json!({"readOnlyHint": false, "openWorldHint": true}))).0, Inferred::Both);
+        assert_eq!(infer_label(&with(serde_json::json!({"readOnlyHint": false, "openWorldHint": false}))).0, Inferred::CleanOnly);
     }
 
     #[test]

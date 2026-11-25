@@ -706,3 +706,43 @@ async fn a_refused_tainted_call_waits_for_a_person_and_their_approval_runs_it_on
     client.cancel().await.unwrap();
     cleimesh(&["audit", "verify", "--receipts", &path(&receipts), "--identity", &path(&node)]);
 }
+
+#[test]
+fn mcp_add_takes_labels_from_the_hints_the_server_declares_unless_told_otherwise() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().canonicalize().unwrap();
+    let k = |name: &str| base.join(name);
+    let path = |p: &Path| p.to_str().unwrap().to_string();
+    let exe = env!("CARGO_BIN_EXE_cleimesh");
+    let (inner_node, inner_agent, inner_chain) = (k("in-node.key"), k("in-agent.key"), k("in.json"));
+    cleimesh(&["token", "issue", &peer_id(&inner_agent), "--tool", "echo", "--tool", "file_write", "--identity", &path(&inner_node), "--output", &path(&inner_chain)]);
+    let add = |name: &str, flags: &[&str]| {
+        let mut a: Vec<String> = ["mcp", "add", name, "--print", "--dir", &path(&k(&format!("mcp-{name}"))), "--holder", &path(&k("agent.key")), "--identity", &path(&k("node.key"))].map(String::from).to_vec();
+        a.extend(flags.iter().map(|f| f.to_string()));
+        a.push("--".into());
+        a.extend([exe, "mcp", "serve", "--token", &path(&inner_chain), "--holder", &path(&inner_agent), "--identity", &path(&inner_node), "--receipts", &path(&k(&format!("{name}.jsonl")))].map(String::from));
+        Command::new(exe).args(&a).output().unwrap()
+    };
+    let grants = |name: &str| -> Value {
+        let chain: Value = serde_json::from_str(&std::fs::read_to_string(k(&format!("mcp-{name}")).join(format!("{name}.json"))).unwrap()).unwrap();
+        let claims = cleimesh_aat::inspect(chain["chain"][0].as_str().unwrap()).unwrap();
+        serde_json::to_value(&claims).unwrap()["authorization_details"].as_array().unwrap().iter().find(|d| d["type"] == "cleimesh_sandbox").cloned().unwrap_or(Value::Null)
+    };
+
+    // No flags: file_write declares readOnlyHint false, so it becomes clean-only; echo is read-only over a closed world.
+    let out = add("a", &["--tool", "echo", "--tool", "file_write"]);
+    let said = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{said}");
+    assert!(said.contains("file_write [refused once the agent is tainted] (from the server's readOnlyHint false)"), "{said}");
+    assert_eq!(grants("a")["tools"]["file_write"]["clean_only"], true);
+    assert!(grants("a")["tools"]["echo"].is_null());
+
+    // Explicit flags win, and --no-auto-labels turns inference off.
+    let out = add("b", &["--tool", "echo", "--tool", "file_write", "--taints", "echo"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(grants("b")["tools"]["echo"]["taints"], true);
+    assert!(grants("b")["tools"]["file_write"].is_null(), "inferred despite explicit flags");
+    let out = add("c", &["--tool", "echo", "--tool", "file_write", "--no-auto-labels"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(grants("c").is_null() || grants("c")["tools"]["file_write"].is_null());
+}

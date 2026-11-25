@@ -38,6 +38,8 @@ Without `--taints` or `--clean-only`, `mcp add` takes the labels from the hints 
 
 Remote servers (streamable HTTP) go behind a token the same way: `cleimesh mcp add github --url https://api.example.com/mcp --bearer-env GITHUB_MCP_TOKEN`. Only `https`, or plain `http` to this machine. The bearer token is read from the named environment variable when the wrapper connects; only the variable's name is saved, and receipts name the server by the digest of its URL.
 
+The wrapper itself can be served over HTTP, for clients and agents that only speak it: `cleimesh mcp wrap --servers servers.json --listen 127.0.0.1:8765 --listen-token-env WRAP_TOKEN` serves `/mcp`, and refuses any request without that bearer token (it won't start without one: whoever reaches the wrapper acts as the agent). Every HTTP session shares one node, one receipt log and one view of taint. Off this machine, put TLS in front.
+
 ## Give your agent an allowance
 
 Your agent is stuck in a demo because you can't trust it with anything real: money, prod, a customer's data. Hand it a **signed allowance** — one tool, one recipient, up to an amount, for a number of calls — and it acts on its own inside the limit, while a prompt-injected or malicious agent can't widen it or lie about it, because the limit is enforced outside the agent, not asked of it.

@@ -38,6 +38,8 @@ Sem `--taints` nem `--clean-only`, o `mcp add` tira os rótulos das dicas que o 
 
 Servidores remotos (streamable HTTP) entram atrás do token do mesmo jeito: `cleimesh mcp add github --url https://api.example.com/mcp --bearer-env GITHUB_MCP_TOKEN`. Só `https`, ou `http` simples para esta máquina. O token Bearer é lido da variável de ambiente indicada quando o wrapper conecta; só o nome da variável é salvo, e os recibos identificam o servidor pelo digest da URL.
 
+O próprio wrapper pode ser servido por HTTP, para clientes e agentes que só falam HTTP: `cleimesh mcp wrap --servers servers.json --listen 127.0.0.1:8765 --listen-token-env WRAP_TOKEN` serve `/mcp` e recusa qualquer requisição sem aquele token Bearer (sem ele, nem sobe: quem alcança o wrapper age como o agente). Todas as sessões HTTP compartilham um nó, um log de recibos e uma visão de contaminação. Fora desta máquina, ponha TLS na frente.
+
 Agentes de IA (Claude Code, Cursor, LangGraph, CrewAI...) chamam tools de terceiros e delegam tarefas a outros agentes, quase sempre **com todas as suas permissões**. Uma tool maliciosa, ou uma prompt injection escondida num e-mail que o agente leu, pode ler `~/.ssh` e `.env`, apagar arquivos ou vazar dados. E depois ninguém consegue provar qual agente fez o quê, em nome de quem.
 
 A maioria das ferramentas da área checa a permissão **na porta** (um proxy ou gateway) e depois deixa a tool rodar com acesso total, e os logs de auditoria pedem que você confie em quem os assinou. O CleiMesh junta cinco peças:

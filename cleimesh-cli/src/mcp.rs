@@ -528,6 +528,26 @@ impl ServerHandler for Wrapper {
 }
 
 
+/// The wrapper shared by every HTTP session (`mcp wrap --listen`): one node,
+/// one receipt log and one view of taint, whichever session a call comes in on.
+#[derive(Clone)]
+pub struct SharedWrapper(pub Arc<Wrapper>);
+
+impl ServerHandler for SharedWrapper {
+    fn get_info(&self) -> ServerConfig {
+        self.0.get_info()
+    }
+
+    async fn list_tools(&self, request: Option<PaginatedRequestParams>, context: RequestContext<RoleServer>) -> Result<ListToolsResult, McpError> {
+        self.0.list_tools(request, context).await
+    }
+
+    async fn call_tool(&self, request: CallToolRequestParams, context: RequestContext<RoleServer>) -> Result<CallToolResponse, McpError> {
+        self.0.call_tool(request, context).await
+    }
+}
+
+
 #[cfg(test)]
 mod review_tests {
     use super::*;

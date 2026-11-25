@@ -312,6 +312,15 @@ enum McpCommands {
         /// for it, once
         #[arg(long, value_name = "DIR", conflicts_with = "allowance")]
         approvals: Option<PathBuf>,
+        /// Serve over streamable HTTP at this address (e.g. 127.0.0.1:8765,
+        /// path /mcp) instead of standard input and output
+        #[arg(long, value_name = "ADDR", requires = "listen_token_env", conflicts_with = "allowance")]
+        listen: Option<String>,
+        /// With --listen: the environment variable holding the bearer token
+        /// every HTTP client must send. Required: the wrapper acts with the
+        /// agent's token, so whoever reaches it acts as the agent
+        #[arg(long, value_name = "VAR")]
+        listen_token_env: Option<String>,
         /// The MCP server's command and its arguments, after `--`
         #[arg(last = true, required_unless_present = "servers", value_name = "COMMAND")]
         command: Vec<String>,
@@ -803,14 +812,14 @@ async fn run(cli: Cli) -> Result<()> {
             }
         }
         Commands::Mcp(McpCommands::Serve { token, holder, node, identity, receipts }) => mcp_serve(token, holder, node, identity, receipts).await?,
-        Commands::Mcp(McpCommands::Wrap { token, holder, identity, receipts, allowance, owner, agent, ledger, servers, approvals, command }) => {
+        Commands::Mcp(McpCommands::Wrap { token, holder, identity, receipts, allowance, owner, agent, ledger, servers, approvals, listen, listen_token_env, command }) => {
             match allowance {
                 Some(allowance) => {
                     let owner = owner.ok_or_else(|| cleimesh_core::CleiMeshError::Internal(anyhow::anyhow!("--allowance needs --owner <owner.key.pub.json>")))?;
                     let agent = agent.ok_or_else(|| cleimesh_core::CleiMeshError::Internal(anyhow::anyhow!("--allowance needs --agent <agent.key>")))?;
                     allowance::wrap(allowance, agent, owner, ledger, receipts, command).await?
                 }
-                None => mcp_wrap(token, holder, identity, receipts, servers, approvals, command).await?,
+                None => mcp_wrap(token, holder, identity, receipts, servers, approvals, listen.map(|a| (a, listen_token_env.unwrap_or_default())), command).await?,
             }
         }
         Commands::Mcp(McpCommands::Add { name, tools, taints, clean_only, when_tainted, no_auto_labels, url, bearer_env, approvals, ttl, scope, print, dir, holder, identity, receipts, command }) => {
@@ -1258,9 +1267,21 @@ async fn mcp_wrap(
     receipts: Option<PathBuf>,
     servers: Option<PathBuf>,
     approvals: Option<PathBuf>,
+    listen: Option<(String, String)>,
     command: Vec<String>,
 ) -> Result<()> {
     use rmcp::ServiceExt;
+    // Read the listen token first: a wrapper that would listen unauthenticated must not start.
+    let listen = match listen {
+        Some((addr, var)) => {
+            let token = std::env::var(&var).map_err(|_| anyhow::anyhow!("--listen-token-env {}: that environment variable is not set", var))?;
+            if token.len() < 16 {
+                return Err(anyhow::anyhow!("--listen-token-env {}: use a token of at least 16 characters", var).into());
+            }
+            Some((addr, token))
+        }
+        None => None,
+    };
 
     let config = P2PConfig {
         listen_addresses: Vec::new(),
@@ -1303,11 +1324,43 @@ async fn mcp_wrap(
         Err(e) => return Err(anyhow::anyhow!(e).into()),
     };
 
+    if let Some((addr, token)) = listen {
+        return serve_http(mcp::SharedWrapper(std::sync::Arc::new(wrapper)), &addr, token).await;
+    }
     let service = wrapper
         .serve(rmcp::transport::stdio())
         .await
         .map_err(|e| anyhow::anyhow!("MCP server failed to start: {}", e))?;
     service.waiting().await.map_err(|e| anyhow::anyhow!("MCP server stopped: {}", e))?;
+    Ok(())
+}
+
+/// Serves the wrapper over streamable HTTP at `addr`, path /mcp, refusing
+/// any request without `Authorization: Bearer <token>`.
+async fn serve_http(wrapper: mcp::SharedWrapper, addr: &str, token: String) -> Result<()> {
+    use rmcp::transport::streamable_http_server::{session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService};
+    let socket: std::net::SocketAddr = addr.parse().map_err(|e| anyhow::anyhow!("--listen {}: {}", addr, e))?;
+    if !socket.ip().is_loopback() {
+        eprintln!("cleimesh mcp wrap: listening on {} over plain HTTP; put TLS in front (a reverse proxy) before anything leaves this machine", socket);
+    }
+    let service = StreamableHttpService::new(move || Ok(wrapper.clone()), std::sync::Arc::new(LocalSessionManager::default()), StreamableHttpServerConfig::default());
+    let expected = format!("Bearer {}", token);
+    let app = axum::Router::new().nest_service("/mcp", service).layer(axum::middleware::from_fn(move |req: axum::extract::Request, next: axum::middleware::Next| {
+        let expected = expected.clone();
+        async move {
+            let given = req.headers().get(axum::http::header::AUTHORIZATION).map(|v| v.as_bytes().to_vec()).unwrap_or_default();
+            // Constant-time comparison: the token is the agent's authority.
+            let ok = given.len() == expected.len() && given.iter().zip(expected.as_bytes()).fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0;
+            if ok {
+                next.run(req).await
+            } else {
+                axum::response::IntoResponse::into_response(axum::http::StatusCode::UNAUTHORIZED)
+            }
+        }
+    }));
+    let listener = tokio::net::TcpListener::bind(socket).await.map_err(|e| anyhow::anyhow!("--listen {}: {}", socket, e))?;
+    eprintln!("cleimesh mcp wrap: serving at http://{}/mcp", listener.local_addr().map_err(|e| anyhow::anyhow!("{}", e))?);
+    axum::serve(listener, app).await.map_err(|e| anyhow::anyhow!("HTTP server stopped: {}", e))?;
     Ok(())
 }
 

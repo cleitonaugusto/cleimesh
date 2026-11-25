@@ -8,6 +8,10 @@ on:
       tag:
         description: Release tag (e.g. v0.2.5)
         required: true
+      ref:
+        description: Commit or branch to build from (the tag, or main when the tag predates the packaging)
+        required: false
+        default: main
 permissions:
   contents: read
 jobs:
@@ -19,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ inputs.ref || inputs.tag }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22

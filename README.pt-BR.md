@@ -25,7 +25,11 @@ Sua equipe dá ferramentas reais aos agentes: e-mail, arquivos, pagamentos, prod
 
 ![Dois servidores MCP oficiais adicionados com um comando cada; o agente busca uma página envenenada, lê um segredo, e a gravação do segredo é recusada no outro servidor; os recibos dizem por quê](examples/mcp-add/mcp-add.gif)
 
-**Vídeos (cerca de um minuto cada, legendados):** [um agente lê uma página envenenada](docs/videos/v1-poisoned-page-pt.mp4) · [prove ao auditor](docs/videos/v2-prove-it-pt.mp4) · [o Claude Code lê uma issue envenenada](docs/videos/v3-poisoned-issue-pt.mp4)
+**Claude Code real, uma issue envenenada e o guard** (70 s, legendado):
+
+https://github.com/user-attachments/assets/0989c421-360e-4c5f-8246-611d01068268
+
+Mais, cerca de um minuto cada: [um agente lê uma página envenenada](https://github.com/user-attachments/assets/3b314ef1-08c8-4565-9bbb-60cf9162f894) · [prove ao auditor](https://github.com/user-attachments/assets/8298d0e3-5ea3-4aaf-8b75-e9fd07aa5f47) · [todos os vídeos, EN e PT](https://github.com/cleitonaugusto/cleimesh/discussions/1)
 
 ## Para quem desenvolve
 

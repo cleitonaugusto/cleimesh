@@ -25,7 +25,11 @@ Your team gives agents real tools: mail, files, payments, prod. One web page, ti
 
 ![Two official MCP servers added with one command each; the agent fetches a poisoned page, reads a secret, and its write of the secret is refused on the other server; the receipts say why](examples/mcp-add/mcp-add.gif)
 
-**Videos (about a minute each, captioned):** [an agent reads a poisoned page](docs/videos/v1-poisoned-page-en.mp4) · [prove it to an auditor](docs/videos/v2-prove-it-en.mp4) · [Claude Code reads a poisoned issue](docs/videos/v3-poisoned-issue-en.mp4)
+**Real Claude Code, a poisoned issue, and the guard** (70 s, captioned):
+
+https://github.com/user-attachments/assets/6f248ccf-5d14-466d-b917-137cd57599a7
+
+More, about a minute each: [an agent reads a poisoned page](https://github.com/user-attachments/assets/2f5daf8c-9f2b-415a-895a-523337f77efb) · [prove it to an auditor](https://github.com/user-attachments/assets/c5644735-59c3-4748-a9e7-1deddd95a440) · [all videos, EN and PT](https://github.com/cleitonaugusto/cleimesh/discussions/1)
 
 ## For engineers
 

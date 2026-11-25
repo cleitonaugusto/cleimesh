@@ -11,7 +11,7 @@ WRAP = ["cleimesh", "mcp", "wrap", "--servers", "/root/.config/cleimesh/mcp/serv
 def show(step, res):
     text = res.content[0].text if res.content else ""
     verdict = "REFUSED" if res.is_error and "refused" in text.lower() else ("error" if res.is_error else "ok")
-    print(f"  {step:<46} -> {verdict}" + (f" | {text[:150]}" if verdict != "ok" else ""))
+    print(f"  {step:<46} -> {verdict}" + (f" | {text[:400]}" if verdict != "ok" else ""))
 
 async def main(mode):
     cmd = WRAP if mode == "cleimesh" else SERVER

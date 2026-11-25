@@ -12,6 +12,10 @@ cleimesh mcp add mail --tool list_emails_metadata --tool get_emails_content --to
   --clean-only send_email --clean-only forward_email -- mcp-email-server stdio
 ```
 
+![One email asked for the key: without cleimesh the injected agent sends and forwards it, 2 mails reach the attacker; with one cleimesh mcp add in front of the same server both are refused and the attacker gets 0](fig-email.png)
+
+![The same run in a terminal: the agent straight to mcp-email-server leaks twice; behind cleimesh, send_email and forward_email are refused and audit verify checks 8 receipts](email.gif)
+
 From the [transcript](transcript.txt):
 
 ```
@@ -51,3 +55,5 @@ in plain text; use the server's keyring storage for a real account.
 `mcp-email-server` has its own recipient allowlist (`allowed_recipients`), and it is worth setting. It
 decides by address, before and after the agent read anything. The demo sets it to `*`, as a mailbox that
 replies to customers would; taint decides by what the agent has read.
+
+The GIF is `gif.sh` recorded with asciinema and rendered with agg; it shortens the refusal lines for the screen.

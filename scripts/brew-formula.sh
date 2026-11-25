@@ -10,7 +10,7 @@ MAC_ARM=$(sha aarch64-apple-darwin); MAC_X86=$(sha x86_64-apple-darwin)
 LIN_ARM=$(sha aarch64-unknown-linux-musl); LIN_X86=$(sha x86_64-unknown-linux-musl)
 cat <<RUBY
 class Cleimesh < Formula
-  desc "What your agent reads can't decide what it does: MCP servers behind signed tokens"
+  desc "Put MCP servers behind signed tokens, with taint and signed receipts"
   homepage "https://github.com/$REPO"
   version "$VERSION"
   license any_of: ["MIT", "Apache-2.0"]

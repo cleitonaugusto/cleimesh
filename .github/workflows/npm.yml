@@ -1,0 +1,29 @@
+name: npm
+# Publishes the npm launcher for a release: it downloads that release's binary
+# on first use and checks it against the checksums set here. Trusted
+# publishing with provenance (no token stored). Run by hand for a release tag.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag (e.g. v0.2.5)
+        required: true
+permissions:
+  contents: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - run: packaging/npm/prepare.sh "${{ inputs.tag }}"
+      - run: npm publish --provenance --access public
+        working-directory: packaging/npm

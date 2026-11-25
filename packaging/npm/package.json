@@ -1,0 +1,13 @@
+{
+  "name": "cleimesh",
+  "version": "0.0.0",
+  "description": "What your agent reads can't decide what it does: MCP servers behind signed tokens, taint across servers, signed receipts.",
+  "license": "(MIT OR Apache-2.0)",
+  "homepage": "https://github.com/cleitonaugusto/cleimesh",
+  "repository": { "type": "git", "url": "git+https://github.com/cleitonaugusto/cleimesh.git" },
+  "keywords": ["mcp", "security", "agents", "prompt-injection", "receipts"],
+  "bin": { "cleimesh": "bin/cleimesh.js" },
+  "files": ["bin/cleimesh.js"],
+  "engines": { "node": ">=18" },
+  "cleimesh": { "sha256": {} }
+}

@@ -1,0 +1,19 @@
+[build-system]
+requires = ["maturin>=1.5,<2"]
+build-backend = "maturin"
+
+[project]
+name = "cleimesh"
+description = "What your agent reads can't decide what it does: MCP servers behind signed tokens, taint across servers, signed receipts."
+requires-python = ">=3.8"
+license = { text = "MIT OR Apache-2.0" }
+keywords = ["mcp", "security", "agents", "prompt-injection", "receipts"]
+classifiers = ["Topic :: Security", "Programming Language :: Rust", "Environment :: Console"]
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/cleitonaugusto/cleimesh"
+Source = "https://github.com/cleitonaugusto/cleimesh"
+
+[tool.maturin]
+bindings = "bin"

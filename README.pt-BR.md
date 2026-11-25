@@ -31,7 +31,7 @@ No Claude Code, como plugin (ele roda um servidor `cleimesh` para todos os servi
 /plugin install cleimesh@cleimesh
 ```
 
-Ou pelo terminal:
+Ou pelo terminal (`brew install cleitonaugusto/cleimesh/cleimesh` também funciona, no macOS e no Linux):
 
 ```sh
 curl -fsSL https://github.com/cleitonaugusto/cleimesh/releases/latest/download/install.sh | sh

@@ -21,6 +21,9 @@ jobs:
         include:
           - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, manylinux: musllinux_1_2 }
           - { os: ubuntu-latest, target: aarch64-unknown-linux-musl, manylinux: musllinux_1_2 }
+          # glibc Linux (Debian, Ubuntu, Fedora): pip there doesn't take musllinux wheels.
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, manylinux: "2_28" }
+          - { os: ubuntu-latest, target: aarch64-unknown-linux-gnu, manylinux: "2_28" }
           - { os: macos-latest, target: aarch64-apple-darwin, manylinux: "off" }
           - { os: macos-latest, target: x86_64-apple-darwin, manylinux: "off" }
           - { os: windows-latest, target: x86_64-pc-windows-msvc, manylinux: "off" }
@@ -51,3 +54,5 @@ jobs:
           merge-multiple: true
           path: dist
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true

@@ -1,0 +1,29 @@
+credential_storage = "plaintext"
+enable_attachment_download = false
+enable_attachment_content = false
+allowed_recipients = ["*"]
+allowed_senders = []
+
+[[emails]]
+account_name = "work"
+full_name = "Agent"
+email_address = "agent@corp.test"
+save_to_sent = false
+
+[emails.incoming]
+user_name = "agent"
+password = "agentpw"
+host = "mail"
+port = 3143
+use_ssl = false
+start_ssl = false
+verify_ssl = false
+
+[emails.outgoing]
+user_name = "agent"
+password = "agentpw"
+host = "mail"
+port = 3025
+use_ssl = false
+start_ssl = false
+verify_ssl = false

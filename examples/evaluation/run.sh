@@ -60,8 +60,13 @@ fresh
 add_apc --taints read_ticket --clean-only slow_operation
 OUT=$(run_agent '[["slow_operation",{"seconds":75}]]')
 echo "$OUT" | sed 's/^/    /' | cut -c1-150
-check "the call is cut at the token's time limit" 'echo "$OUT" | grep -q "timed out after 60000 ms"'
-check "the decision receipt exists, and the result receipt records the timeout as a failure" 'jq -e "select(.params.decision==\"allowed\" and .params.tool==\"slow_operation\")" "$(LOG)" >/dev/null && jq -e "select(.action_id==\"cleimesh.tool_result\" and .success==false)" "$(LOG)" >/dev/null'
+check "the call is cut at the token's time limit, and the agent is told the outcome is unknown" 'echo "$OUT" | grep -q "timed out after 60000 ms; outcome unknown"'
+RES=$(jq -c 'select(.action_id=="cleimesh.tool_result")' "$(LOG)" | head -1)
+check "the result receipt records the outcome as unknown, not as failed" '[ "$(echo "$RES" | jq -r .params.observed.outcome)" = "unknown" ]'
+STEP=$(echo "$RES" | jq -r .step_id)
+cleimesh audit settle "$STEP" --outcome succeeded --evidence "operation found when re-read out of band" >/dev/null 2>&1
+check "a person settles it later, linked to that result, with the evidence" 'jq -e --arg s "$STEP" "select(.action_id==\"cleimesh.tool_settled\" and .params.settles==\$s and .params.outcome==\"succeeded\")" "$(LOG)" >/dev/null'
+check "it can be settled only once, and the chain still verifies" '! cleimesh audit settle "$STEP" --outcome failed --evidence again >/dev/null 2>&1 && cleimesh audit verify >/dev/null 2>&1'
 
 echo; echo "== $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

@@ -150,6 +150,9 @@ pub const TAINT_CLEARED_ACTION_ID: &str = "cleimesh.taint_cleared";
 
 /// `action_id` of the receipt of what an allowed call did.
 pub const RESULT_ACTION_ID: &str = "cleimesh.tool_result";
+/// `action_id` of a person settling a result whose outcome was unknown
+/// (a call cut at its time limit): what the world shows, checked later.
+pub const SETTLED_ACTION_ID: &str = "cleimesh.tool_settled";
 /// Layout of `params`; bump on incompatible changes.
 pub const PROFILE: &str = "cleimesh.tool_call/2";
 
@@ -284,6 +287,26 @@ impl Outcome {
     /// decision receipt.
     /// `fs` is what the call touched, from [`fs_observed`]; `egress` the
     /// hops its fetches made, from [`egress_observed`].
+    /// Receipt of a call cut at its time limit: the wait ended, and whether
+    /// the operation took effect is not known. `observed.outcome` is
+    /// `"unknown"`; the envelope's `success` (required by the receipt
+    /// format) is false in the sense "no success observed", and a later
+    /// settlement receipt (`cleimesh.tool_settled`) records what was found.
+    pub(crate) fn timed_out(self, after_ms: u64) -> Entry {
+        let params = json!({
+            "profile": PROFILE,
+            "request_id": self.request_id,
+            "tool": self.tool,
+            "decision_step": self.decision_step,
+            "observed": {
+                "outcome": "unknown",
+                "timed_out_after_ms": after_ms,
+                "duration_ms": self.received.elapsed().as_millis() as u64,
+            },
+        });
+        entry(RESULT_ACTION_ID, params, false)
+    }
+
     pub(crate) fn ran(self, response: &ToolResponse, fs: Option<Value>, egress: Option<Value>) -> Entry {
         let mut observed = serde_json::Map::new();
         observed.insert("success".into(), json!(response.success));
@@ -383,6 +406,32 @@ fn entry(action_id: &str, params: Value, success: bool) -> Entry {
 }
 
 /// Receipt of a human clearing `holder`'s taint (C6).
+/// A person's settlement of a result whose outcome was unknown.
+pub(crate) fn settled(result_step: &str, succeeded: bool, evidence: &str) -> Entry {
+    entry(
+        SETTLED_ACTION_ID,
+        json!({"profile": PROFILE, "settles": result_step, "outcome": if succeeded { "succeeded" } else { "failed" }, "evidence": evidence}),
+        succeeded,
+    )
+}
+
+/// Result receipts whose outcome is still unknown: cut at the time limit
+/// and not settled since, by step id.
+pub fn unsettled(log: &[u8]) -> Vec<String> {
+    let mut open: Vec<String> = Vec::new();
+    for line in String::from_utf8_lossy(log).lines() {
+        let Ok(r) = cleimesh_receipt::Receipt::parse(line) else { continue };
+        if r.action_id == RESULT_ACTION_ID && r.params["observed"]["outcome"] == "unknown" {
+            open.push(r.step_id.clone());
+        } else if r.action_id == SETTLED_ACTION_ID {
+            if let Some(s) = r.params["settles"].as_str() {
+                open.retain(|o| o != s);
+            }
+        }
+    }
+    open
+}
+
 pub(crate) fn taint_cleared(holder: &str, reason: &str) -> Entry {
     entry(TAINT_CLEARED_ACTION_ID, json!({"profile": PROFILE, "holder": holder, "reason": reason}), true)
 }

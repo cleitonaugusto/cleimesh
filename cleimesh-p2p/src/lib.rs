@@ -903,17 +903,28 @@ impl CleiMeshNode {
             Err(response) => return response,
         };
         let request_id = request.request_id.clone();
-        let response = match tokio::time::timeout(sandbox.max_execution_time, run(request)).await {
-            Ok(response) => response,
-            Err(_) => ToolResponse {
-                request_id,
-                success: false,
-                output: serde_json::json!({}),
-                error: Some(format!("timed out after {} ms", sandbox.max_execution_time.as_millis())),
-            },
-        };
-        self.conclude(outcome, &response, &Default::default());
-        response
+        match tokio::time::timeout(sandbox.max_execution_time, run(request)).await {
+            Ok(response) => {
+                self.conclude(outcome, &response, &Default::default());
+                response
+            }
+            Err(_) => {
+                // The wait ended; whether the operation took effect is unknown,
+                // and the receipt says so instead of recording a failure.
+                let after = sandbox.max_execution_time.as_millis() as u64;
+                let (step, taints) = (outcome.decision_step().to_string(), outcome.taints.clone());
+                self.record(outcome.timed_out(after));
+                for holder in taints {
+                    self.tainted.insert(holder, step.clone());
+                }
+                ToolResponse {
+                    request_id,
+                    success: false,
+                    output: serde_json::json!({}),
+                    error: Some(format!("timed out after {} ms; outcome unknown (settle it with cleimesh audit settle)", after)),
+                }
+            }
+        }
     }
 
     /// Records a run's result and, if its tool brings in untrusted content,
@@ -937,6 +948,13 @@ impl CleiMeshNode {
     /// A human decision that `holder` (JWK thumbprint URI) may use
     /// clean-only tools again, recorded as a receipt. Errors if the receipt
     /// can't be written: an unrecorded clearing must not take effect.
+    /// Records a person's settlement of a result whose outcome was unknown.
+    pub fn settle(&mut self, result_step: &str, succeeded: bool, evidence: &str) -> std::result::Result<(), String> {
+        let log = self.receipts.as_mut().ok_or("no receipt log")?;
+        log.append(receipts::settled(result_step, succeeded, evidence)).map_err(|e| format!("settlement not recorded: {}", e))?;
+        Ok(())
+    }
+
     pub fn clear_taint(&mut self, holder: &str, reason: &str) -> std::result::Result<(), String> {
         if let Some(log) = self.receipts.as_mut() {
             log.append(receipts::taint_cleared(holder, reason)).map_err(|e| format!("clearing not recorded: {}", e))?;

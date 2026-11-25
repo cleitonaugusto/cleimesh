@@ -325,6 +325,13 @@ enum McpCommands {
         /// agent is tainted (repeatable)
         #[arg(long = "clean-only", value_name = "TOOL")]
         clean_only: Vec<String>,
+        /// What a clean-only tool may still do once the agent is tainted:
+        /// TOOL.ARG=V1,V2 (only these values; for a list argument, only
+        /// items among them) or TOOL.ARG=* (any value). Every argument the
+        /// call carries must be named, or the tainted call is refused
+        /// (repeatable). E.g. send_email.recipients=boss@corp.test
+        #[arg(long = "when-tainted", value_name = "TOOL.ARG=VALUES")]
+        when_tainted: Vec<String>,
         /// Token lifetime in seconds (default 30 days)
         #[arg(long, default_value = "2592000")]
         ttl: i64,
@@ -776,8 +783,8 @@ async fn run(cli: Cli) -> Result<()> {
                 None => mcp_wrap(token, holder, identity, receipts, servers, command).await?,
             }
         }
-        Commands::Mcp(McpCommands::Add { name, tools, taints, clean_only, ttl, scope, print, dir, holder, identity, receipts, command }) => {
-            mcp_add(McpAdd { name, tools, taints, clean_only, ttl, scope, print, dir, holder, identity, receipts, command }).await?
+        Commands::Mcp(McpCommands::Add { name, tools, taints, clean_only, when_tainted, ttl, scope, print, dir, holder, identity, receipts, command }) => {
+            mcp_add(McpAdd { name, tools, taints, clean_only, when_tainted, ttl, scope, print, dir, holder, identity, receipts, command }).await?
         }
         Commands::Allowance(cmd) => match cmd {
             AllowanceCommands::Keygen { out } => allowance::keygen(&out)?,
@@ -1224,6 +1231,27 @@ async fn mcp_wrap(
     Ok(())
 }
 
+/// One `--when-tainted TOOL.ARG=V1,V2|*` rule, typed by the tool's input
+/// schema: `*` admits any value, a list argument may only hold the given
+/// values (subset), any other only be one of them.
+fn when_tainted_rule(spec: &str, listed: &[rmcp::model::Tool]) -> Result<(String, String, aat::Constraint)> {
+    let bad = |why: &str| -> cleimesh_core::CleiMeshError { anyhow::anyhow!("--when-tainted {}: {}", spec, why).into() };
+    let (target, values) = spec.split_once('=').ok_or_else(|| bad("expected TOOL.ARG=VALUES"))?;
+    let (tool, arg) = target.split_once('.').ok_or_else(|| bad("expected TOOL.ARG=VALUES"))?;
+    let def = listed.iter().find(|t| t.name == tool).ok_or_else(|| bad(&format!("the server lists no tool named {}", tool)))?;
+    let schema = def.input_schema.get("properties").and_then(|p| p.get(arg)).ok_or_else(|| bad(&format!("{} takes no argument named {}", tool, arg)))?;
+    if values == "*" {
+        return Ok((tool.into(), arg.into(), aat::Constraint::Wildcard));
+    }
+    let values: Vec<serde_json::Value> = values.split(',').map(|v| serde_json::Value::String(v.trim().to_string())).filter(|v| v.as_str() != Some("")).collect();
+    if values.is_empty() {
+        return Err(bad("no values; use * for any"));
+    }
+    let is_list = schema.get("type").is_some_and(|t| t == "array" || t.as_array().is_some_and(|a| a.iter().any(|x| x == "array")));
+    let constraint = if is_list { aat::Constraint::Subset { allowed: values } } else { aat::Constraint::OneOf { values } };
+    Ok((tool.into(), arg.into(), constraint))
+}
+
 /// The client entry `cleimesh mcp add` registers: one, for every server.
 const MCP_ENTRY: &str = "cleimesh-mcp";
 
@@ -1232,6 +1260,7 @@ struct McpAdd {
     tools: Vec<String>,
     taints: Vec<String>,
     clean_only: Vec<String>,
+    when_tainted: Vec<String>,
     ttl: i64,
     scope: String,
     print: bool,
@@ -1330,6 +1359,13 @@ async fn mcp_add(a: McpAdd) -> Result<()> {
     }
     for t in &a.clean_only {
         grants.entry(t.clone()).or_default().clean_only = true;
+    }
+    for spec in &a.when_tainted {
+        let (tool, arg, constraint) = when_tainted_rule(spec, &listed)?;
+        let grant = grants.get_mut(&tool).filter(|g| g.clean_only).ok_or_else(|| fail(format!("--when-tainted {}: {} is not --clean-only", spec, tool)))?;
+        if grant.when_tainted.insert(arg.clone(), constraint).is_some() {
+            return Err(fail(format!("--when-tainted {}: {}.{} given twice", spec, tool, arg)));
+        }
     }
     let iss = format!("urn:cleimesh:node:{}", node.public().to_peer_id());
     let holder_jwk = holder(&client.public().to_peer_id().to_string())?;
@@ -1850,6 +1886,8 @@ impl TokenGrant {
             timeout_ms: self.timeout_ms,
             taints: self.taints,
             clean_only: self.clean_only,
+            // Narrower tainted rules come from a grants file (--grants) or `mcp add --when-tainted`.
+            when_tainted: Default::default(),
         };
         if grant == Default::default() {
             return Ok(Default::default());

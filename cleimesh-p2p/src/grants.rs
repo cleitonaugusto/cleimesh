@@ -31,7 +31,7 @@ use serde_json::Value;
 pub const SANDBOX_TYPE: &str = "cleimesh_sandbox";
 
 /// What one tool may use while it runs.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ToolGrant {
     /// Directories the tool may read.
@@ -67,6 +67,13 @@ pub struct ToolGrant {
     /// can't drive it (C6).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub clean_only: bool,
+    /// What a `clean_only` tool may still do once the chain is tainted:
+    /// argument name → AAT constraint, closed world (every argument the call
+    /// carries must be listed and satisfy its constraint; `null` and `[]`
+    /// count as absent). Empty: refused while tainted. E.g. a mail tool that
+    /// may still write to `boss@corp.test` but to no one else.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub when_tainted: BTreeMap<String, cleimesh_aat::Constraint>,
 }
 
 /// Tool name → grant.
@@ -103,6 +110,12 @@ pub fn of(claims: &Claims) -> Result<Grants, String> {
         }
         if let Some(host) = grant.hosts.iter().find(|h| cleimesh_wasm_sandbox::egress::parse_grant_host(h).is_none()) {
             return Err(format!("granted host {:?} must be a name or IP address, with an optional :port", host));
+        }
+        if !grant.when_tainted.is_empty() && !grant.clean_only {
+            return Err("when_tainted needs clean_only: it narrows what a tainted chain may do".into());
+        }
+        if grant.when_tainted.values().any(|c| c.depth() > cleimesh_aat::MAX_CONSTRAINT_DEPTH) {
+            return Err("when_tainted constraint nested too deep".into());
         }
     }
     Ok(entry.tools)
@@ -148,6 +161,19 @@ fn narrows(child: &ToolGrant, parent: &ToolGrant) -> Result<(), String> {
     if parent.clean_only && !child.clean_only {
         return Err("clean_only dropped: the parent keeps this tool from tainted chains".into());
     }
+    if !child.when_tainted.is_empty() {
+        if parent.clean_only && parent.when_tainted.is_empty() {
+            return Err("when_tainted added: the parent refuses this tool outright once tainted".into());
+        }
+        if !parent.when_tainted.is_empty() {
+            for (arg, c) in &child.when_tainted {
+                match parent.when_tainted.get(arg) {
+                    Some(p) if c.subsumes(p) => {}
+                    _ => return Err(format!("when_tainted widens argument {} beyond the parent's", arg)),
+                }
+            }
+        }
+    }
     if raised(child.max_instructions, parent.max_instructions)
         || raised(child.max_memory_bytes.map(|m| m as u64), parent.max_memory_bytes.map(|m| m as u64))
         || raised(child.timeout_ms, parent.timeout_ms)
@@ -188,6 +214,41 @@ pub fn effective(chain: &[Claims], tool: &str) -> Result<(ToolGrant, ToolGrant),
     leaf.taints = grants.iter().any(|g| g.get(tool).is_some_and(|t| t.taints));
     leaf.clean_only = grants.iter().any(|g| g.get(tool).is_some_and(|t| t.clean_only));
     Ok((leaf, root))
+}
+
+/// Whether a call to `tool` with `args` may go through although the chain is
+/// tainted: every link that marks the tool `clean_only` must list, in
+/// `when_tainted`, every argument the call carries, and each must satisfy its
+/// constraint. A link that marks it `clean_only` with no `when_tainted`
+/// refuses it. Checked on every link, not only the leaf, so a link that left
+/// the tool out can't let a later one widen what an earlier one allowed.
+pub fn tainted_admits(chain: &[Claims], tool: &str, args: &Value) -> Result<(), String> {
+    let absent = |v: &Value| v.is_null() || v.as_array().is_some_and(|a| a.is_empty());
+    let empty = serde_json::Map::new();
+    let args = match args {
+        Value::Object(m) => m,
+        Value::Null => &empty,
+        _ => return Err("arguments are not an object".into()),
+    };
+    let mut constrained = false;
+    for claims in chain {
+        let Some(grant) = of(claims)?.remove(tool) else { continue };
+        if !grant.clean_only {
+            continue;
+        }
+        if grant.when_tainted.is_empty() {
+            return Err("no when_tainted: refused outright once tainted".into());
+        }
+        constrained = true;
+        for (name, value) in args.iter().filter(|(_, v)| !absent(v)) {
+            match grant.when_tainted.get(name) {
+                Some(c) if c.check(value) => {}
+                Some(_) => return Err(format!("argument {} is outside what a tainted chain may use", name)),
+                None => return Err(format!("argument {} is not allowed once tainted", name)),
+            }
+        }
+    }
+    if constrained { Ok(()) } else { Err("no link limits this tool once tainted".into()) }
 }
 
 /// The sandbox a call runs in: `base` (the node's own limits) narrowed by

@@ -545,12 +545,18 @@ impl CleiMeshNode {
         // A tool that acts on the world refuses a chain in which anyone has
         // read untrusted content: instructions injected there can't drive it,
         // and delegating to a fresh subagent doesn't launder the taint (C6).
+        let mut admitted_tainted = None;
         if grant.clean_only {
             if let Some((holder, step)) = lineage.iter().find_map(|h| self.tainted.get(h).map(|s| (h, s))) {
-                return Err(format!(
-                    "{} refused: holder {} in this chain received untrusted content (receipt {}); clearing it takes a human (cleimesh taint clear)",
-                    tool, holder, step
-                ));
+                // The chain may still allow a narrower form of the call
+                // (`when_tainted`): e.g. mail to an address fixed in the token.
+                if let Err(why) = grants::tainted_admits(&verified.chain, tool, args) {
+                    return Err(format!(
+                        "{} refused: holder {} in this chain received untrusted content (receipt {}); {}; clearing it takes a human (cleimesh taint clear)",
+                        tool, holder, step, why
+                    ));
+                }
+                admitted_tainted = Some(step.to_string());
             }
         }
         let sandbox = grants::sandbox_config(self.sandbox.config(), &grant, &root_grant, max_timeout_ms)?;
@@ -565,6 +571,7 @@ impl CleiMeshNode {
             lineage,
             taints: grant.taints,
             clean_only: grant.clean_only,
+            tainted_by: admitted_tainted,
         };
         Ok((authority, sandbox))
     }

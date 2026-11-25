@@ -175,6 +175,10 @@ pub enum Authority {
         /// The tool's flow policy along the chain (C6).
         taints: bool,
         clean_only: bool,
+        /// Set when the chain was tainted and the call went through only
+        /// because its arguments fit `when_tainted`: the receipt that tainted it.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tainted_by: Option<String>,
     },
 }
 

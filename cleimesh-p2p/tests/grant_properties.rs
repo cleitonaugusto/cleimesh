@@ -2,7 +2,7 @@
 //! grants, whatever `grants::effective` accepts gives the leaf nothing that
 //! any token above it did not grant.
 
-use cleimesh_p2p::aat::{Claims, Jwk, SigningKey};
+use cleimesh_p2p::aat::{Claims, Constraint, Jwk, SigningKey};
 use cleimesh_p2p::grants::{self, Grants, ToolGrant};
 use proptest::prelude::*;
 use std::path::Path;
@@ -21,8 +21,9 @@ fn hosts() -> impl Strategy<Value = Vec<String>> {
 
 fn grant() -> impl Strategy<Value = ToolGrant> {
     let limit = prop::option::of(prop::sample::select(vec![10u64, 100, 1000]));
-    let flow = (any::<bool>(), any::<bool>(), hosts(), any::<bool>());
-    (dirs(), dirs(), any::<bool>(), limit.clone(), limit.clone(), limit, flow).prop_map(|(read, write, network, i, m, t, (taints, clean_only, hosts, private))| ToolGrant {
+    let to = prop::option::of(prop::sample::subsequence(vec!["a@corp.test", "b@corp.test", "x@evil.test"], 0..=3));
+    let flow = (any::<bool>(), any::<bool>(), hosts(), any::<bool>(), to);
+    (dirs(), dirs(), any::<bool>(), limit.clone(), limit.clone(), limit, flow).prop_map(|(read, write, network, i, m, t, (taints, clean_only, hosts, private, to))| ToolGrant {
         read,
         write,
         network,
@@ -33,6 +34,11 @@ fn grant() -> impl Strategy<Value = ToolGrant> {
         timeout_ms: t,
         taints,
         clean_only,
+        // Only a clean_only grant may carry it (`of` refuses it otherwise).
+        when_tainted: match to {
+            Some(to) if clean_only => [("to".to_string(), Constraint::one_of(to))].into(),
+            _ => Default::default(),
+        },
     })
 }
 
@@ -82,6 +88,30 @@ proptest! {
                     prop_assert!(l.is_some_and(|l| l <= t), "limit {:?} above {}", l, t);
                 }
             }
+        }
+    }
+
+    /// A tainted chain lets a call through only if every link that keeps the
+    /// tool clean_only would: a link can't widen what an earlier one allowed.
+    #[test]
+    fn tainted_chain_admits_only_what_every_clean_only_link_allows(
+        chain in prop::collection::vec(prop::option::of(grant()), 1..4),
+        to in prop::sample::select(vec!["a@corp.test", "b@corp.test", "x@evil.test"]),
+        extra in any::<bool>(),
+    ) {
+        let tokens: Vec<Claims> = chain.iter().map(claims).collect();
+        if grants::effective(&tokens, "file_read").is_err() { return Ok(()); }
+        let mut args = serde_json::json!({"to": to});
+        if extra { args["bcc"] = serde_json::json!("x@evil.test"); }
+        if grants::tainted_admits(&tokens, "file_read", &args).is_ok() {
+            prop_assert!(!extra, "an unlisted argument went through");
+            let mut any = false;
+            for link in chain.iter().flatten().filter(|g| g.clean_only) {
+                any = true;
+                let c = link.when_tainted.get("to");
+                prop_assert!(c.is_some_and(|c| c.check(&serde_json::json!(to))), "{} admitted beyond {:?}", to, link);
+            }
+            prop_assert!(any, "admitted with no clean_only link");
         }
     }
 }

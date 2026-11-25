@@ -443,6 +443,15 @@ enum AuditCommands {
         /// How it was checked (recorded in the receipt), e.g. "payment 8812 exists at the PSP"
         #[arg(long)]
         evidence: String,
+        /// The document it was checked against (a statement, an export, a screenshot): its SHA-256 and name go in the receipt
+        #[arg(long, value_name = "FILE")]
+        evidence_file: Option<PathBuf>,
+        /// Who settles it (default: the OS user)
+        #[arg(long, value_name = "NAME")]
+        by: Option<String>,
+        /// Correct the settlement already recorded for this result, when a late effect contradicts it
+        #[arg(long)]
+        correct: bool,
         /// Receipt log (default: ~/.local/share/cleimesh/receipts/receipts.jsonl)
         #[arg(long, value_name = "FILE")]
         receipts: Option<PathBuf>,
@@ -857,7 +866,7 @@ async fn run(cli: Cli) -> Result<()> {
         Commands::Demo { name, server } => demo::run(&name, server).await?,
         Commands::Audit(cmd) => match cmd {
             AuditCommands::Verify { receipts, identity, head } => audit_verify(receipts, identity, head)?,
-            AuditCommands::Settle { step, outcome, evidence, receipts, identity } => audit_settle(&step, outcome == "succeeded", &evidence, receipts, identity)?,
+            AuditCommands::Settle { step, outcome, evidence, evidence_file, by, correct, receipts, identity } => audit_settle(&step, outcome == "succeeded", &evidence, evidence_file, by, correct, receipts, identity)?,
             AuditCommands::Head { receipts } => audit_head(receipts)?,
             AuditCommands::Sth { receipts, identity } => audit_sth(receipts, identity)?,
             AuditCommands::Prove { index, receipts, identity } => audit_prove(index, receipts, identity)?,
@@ -2279,15 +2288,34 @@ fn flow_check() -> Result<()> {
 }
 
 /// `cleimesh audit settle`: a person's settlement of an unknown outcome.
-fn audit_settle(step: &str, succeeded: bool, evidence: &str, receipts: Option<PathBuf>, identity: Option<PathBuf>) -> Result<()> {
+#[allow(clippy::too_many_arguments)]
+fn audit_settle(step: &str, succeeded: bool, evidence: &str, evidence_file: Option<PathBuf>, by: Option<String>, correct: bool, receipts: Option<PathBuf>, identity: Option<PathBuf>) -> Result<()> {
     if evidence.trim().is_empty() {
         return Err(anyhow::anyhow!("--evidence: say how the outcome was checked").into());
     }
     let path = receipts_path(receipts.clone())?;
     let log = std::fs::read(&path).map_err(|e| anyhow::anyhow!("Cannot read {}: {}", path.display(), e))?;
-    if !cleimesh_p2p::receipts::unsettled(&log).iter().any(|s| s == step) {
-        return Err(anyhow::anyhow!("{} is not a result with an unknown outcome waiting to be settled (see `cleimesh audit tail`)", step).into());
-    }
+    let supersedes = if correct {
+        // Only a settled result can be corrected; the first settlement stays in the log.
+        match cleimesh_p2p::receipts::settlements(&log).get(step) {
+            Some(prev) => Some(prev.clone()),
+            None => return Err(anyhow::anyhow!("{} has no settlement to correct (settle it without --correct)", step).into()),
+        }
+    } else {
+        if !cleimesh_p2p::receipts::unsettled(&log).iter().any(|s| s == step) {
+            return Err(anyhow::anyhow!("{} is not a result with an unknown outcome waiting to be settled (see `cleimesh audit tail`; to correct a settlement, add --correct)", step).into());
+        }
+        None
+    };
+    let (evidence_sha256, evidence_name) = match &evidence_file {
+        Some(f) => {
+            let bytes = std::fs::read(f).map_err(|e| anyhow::anyhow!("Cannot read {}: {}", f.display(), e))?;
+            (Some(cleimesh_receipt::sha256_hex(&bytes)), f.file_name().map(|n| n.to_string_lossy().into_owned()))
+        }
+        None => (None, None),
+    };
+    let settled_by = by.or_else(|| std::env::var("USER").ok()).or_else(|| std::env::var("USERNAME").ok()).unwrap_or_else(|| "unknown".into());
+    let settlement = cleimesh_p2p::receipts::Settlement { succeeded, evidence: evidence.to_string(), settled_by, evidence_sha256, evidence_name, supersedes };
     let config = P2PConfig {
         listen_addresses: Vec::new(),
         enable_mdns: false,
@@ -2296,7 +2324,7 @@ fn audit_settle(step: &str, succeeded: bool, evidence: &str, receipts: Option<Pa
         ..P2PConfig::default()
     };
     let mut node = CleiMeshNode::new(config, AgentIdentity::new("cli-settle"))?;
-    node.settle(step, succeeded, evidence).map_err(|e| anyhow::anyhow!("{}", e))?;
+    node.settle(step, &settlement).map_err(|e| anyhow::anyhow!("{}", e))?;
     println!("Settled {}: {}", step, if succeeded { "succeeded" } else { "failed" });
     Ok(())
 }

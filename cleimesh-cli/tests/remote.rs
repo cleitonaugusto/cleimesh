@@ -190,6 +190,12 @@ async fn the_wrapper_served_over_http_requires_its_token_and_keeps_one_view_of_t
     cleimesh(&["audit", "verify", "--receipts", &p(&k("r.jsonl")), "--identity", &p(&k("node.key"))]);
 }
 
+async fn call_slow(client: &rmcp::service::RunningService<rmcp::RoleClient, ()>) -> (Option<bool>, String) {
+    let res = client.call_tool(CallToolRequestParams::new("slow".to_string())).await.unwrap();
+    let text: String = res.content.iter().filter_map(|c| c.as_text()).map(|t| t.text.clone()).collect();
+    (res.is_error, text)
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_timed_out_call_is_recorded_as_unknown_until_a_person_settles_it() {
     let url = serve().await;
@@ -202,13 +208,24 @@ async fn a_timed_out_call_is_recorded_as_unknown_until_a_person_settles_it() {
     let agent_peer = cleimesh(&["id", "--identity", &p(&k("agent.key"))]).trim().to_string();
     cleimesh(&["token", "issue", &agent_peer, "--tool", "slow", "--timeout-ms", "500", "--identity", &p(&k("node.key")), "--output", &p(&k("slow.json"))]);
     std::fs::write(k("servers.json"), json!({"servers": {"remote": {"url": url, "bearer_env": "REMOTE_TOKEN", "token": p(&k("slow.json"))}}}).to_string()).unwrap();
-    let mut wrap = tokio::process::Command::new(exe);
-    wrap.args(["mcp", "wrap", "--servers", &p(&k("servers.json")), "--holder", &p(&k("agent.key")), "--identity", &p(&k("node.key")), "--receipts", &p(&k("r.jsonl"))]).env("REMOTE_TOKEN", SECRET);
-    let client = ().serve(TokioChildProcess::new(wrap).unwrap()).await.unwrap();
-    let res = client.call_tool(CallToolRequestParams::new("slow".to_string())).await.unwrap();
-    let text: String = res.content.iter().filter_map(|c| c.as_text()).map(|t| t.text.clone()).collect();
-    assert_eq!(res.is_error, Some(true));
+    let wrap_cmd = || {
+        let mut wrap = tokio::process::Command::new(exe);
+        wrap.args(["mcp", "wrap", "--servers", &p(&k("servers.json")), "--holder", &p(&k("agent.key")), "--identity", &p(&k("node.key")), "--receipts", &p(&k("r.jsonl"))]).env("REMOTE_TOKEN", SECRET);
+        wrap
+    };
+    let client = ().serve(TokioChildProcess::new(wrap_cmd()).unwrap()).await.unwrap();
+    let (err, text) = call_slow(&client).await;
+    assert_eq!(err, Some(true));
     assert!(text.contains("outcome unknown"), "{text}");
+    // Retrying the same call while its outcome is unknown could do it twice: refused.
+    let (err, text) = call_slow(&client).await;
+    assert_eq!(err, Some(true));
+    assert!(text.contains("could do it twice"), "{text}");
+    client.cancel().await.unwrap();
+    // A restarted wrapper still remembers, from the receipts.
+    let client = ().serve(TokioChildProcess::new(wrap_cmd()).unwrap()).await.unwrap();
+    let (_, text) = call_slow(&client).await;
+    assert!(text.contains("could do it twice"), "{text}");
     client.cancel().await.unwrap();
 
     // The result receipt says unknown, not failed.
@@ -219,7 +236,8 @@ async fn a_timed_out_call_is_recorded_as_unknown_until_a_person_settles_it() {
     let step = result["step_id"].as_str().unwrap().to_string();
 
     // A person checks the world and settles it, once; the chain still verifies.
-    let settle = |s: &str| Command::new(exe).args(["audit", "settle", s, "--outcome", "succeeded", "--evidence", "operation found on the server", "--receipts", &p(&k("r.jsonl")), "--identity", &p(&k("node.key"))]).output().unwrap();
+    std::fs::write(k("psp-statement.csv"), "id,amount\n8812,90.00\n").unwrap();
+    let settle = |s: &str| Command::new(exe).args(["audit", "settle", s, "--outcome", "succeeded", "--evidence", "operation found on the server", "--evidence-file", &p(&k("psp-statement.csv")), "--by", "ana@ops", "--receipts", &p(&k("r.jsonl")), "--identity", &p(&k("node.key"))]).output().unwrap();
     let out = settle(&step);
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let again = settle(&step);
@@ -228,5 +246,29 @@ async fn a_timed_out_call_is_recorded_as_unknown_until_a_person_settles_it() {
     let settled: Value = log.lines().map(|l| serde_json::from_str::<Value>(l).unwrap()).find(|r| r["action_id"] == "cleimesh.tool_settled").unwrap();
     assert_eq!(settled["params"]["settles"], step.as_str());
     assert_eq!(settled["params"]["outcome"], "succeeded");
+    // Who settled it and the digest of what they checked it against.
+    assert_eq!(settled["params"]["settled_by"], "ana@ops");
+    assert_eq!(settled["params"]["evidence_name"], "psp-statement.csv");
+    assert_eq!(settled["params"]["evidence_sha256"].as_str().unwrap(), cleimesh_receipt::sha256_hex(b"id,amount\n8812,90.00\n"));
+    cleimesh(&["audit", "verify", "--receipts", &p(&k("r.jsonl")), "--identity", &p(&k("node.key"))]);
+
+    // Settled: the same call may run again.
+    let client = ().serve(TokioChildProcess::new(wrap_cmd()).unwrap()).await.unwrap();
+    let (_, text) = call_slow(&client).await;
+    assert!(!text.contains("could do it twice") && text.contains("outcome unknown"), "{text}");
+    client.cancel().await.unwrap();
+
+    // A late effect contradicts the first settlement: corrected, linked, both kept.
+    let first = settled["step_id"].as_str().unwrap().to_string();
+    let out = Command::new(exe).args(["audit", "settle", &step, "--outcome", "failed", "--evidence", "PSP reversed 8812 on day 2", "--correct", "--receipts", &p(&k("r.jsonl")), "--identity", &p(&k("node.key"))]).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let log = std::fs::read_to_string(k("r.jsonl")).unwrap();
+    let all: Vec<Value> = log.lines().map(|l| serde_json::from_str::<Value>(l).unwrap()).filter(|r| r["action_id"] == "cleimesh.tool_settled" && r["params"]["settles"] == step.as_str()).collect();
+    assert_eq!(all.len(), 2);
+    assert_eq!(all[1]["params"]["supersedes"], first.as_str());
+    assert_eq!(all[1]["params"]["outcome"], "failed");
+    // --correct needs a settlement to correct.
+    let fresh = Command::new(exe).args(["audit", "settle", "no-such-step", "--outcome", "failed", "--evidence", "x", "--correct", "--receipts", &p(&k("r.jsonl")), "--identity", &p(&k("node.key"))]).output().unwrap();
+    assert!(!fresh.status.success() && String::from_utf8_lossy(&fresh.stderr).contains("no settlement to correct"));
     cleimesh(&["audit", "verify", "--receipts", &p(&k("r.jsonl")), "--identity", &p(&k("node.key"))]);
 }

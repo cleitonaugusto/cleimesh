@@ -405,14 +405,85 @@ fn entry(action_id: &str, params: Value, success: bool) -> Entry {
     }
 }
 
-/// Receipt of a human clearing `holder`'s taint (C6).
-/// A person's settlement of a result whose outcome was unknown.
-pub(crate) fn settled(result_step: &str, succeeded: bool, evidence: &str) -> Entry {
-    entry(
-        SETTLED_ACTION_ID,
-        json!({"profile": PROFILE, "settles": result_step, "outcome": if succeeded { "succeeded" } else { "failed" }, "evidence": evidence}),
-        succeeded,
-    )
+/// How a settlement was established: who says so, what they checked, and
+/// optionally the digest of the document they checked it against.
+#[derive(Debug, Clone, Default)]
+pub struct Settlement {
+    pub succeeded: bool,
+    pub evidence: String,
+    pub settled_by: String,
+    pub evidence_sha256: Option<String>,
+    pub evidence_name: Option<String>,
+    /// A previous settlement of the same result this one corrects, when a
+    /// late effect contradicts what was first found.
+    pub supersedes: Option<String>,
+}
+
+/// Receipt of a person's settlement of a result whose outcome was unknown.
+pub(crate) fn settled(result_step: &str, s: &Settlement) -> Entry {
+    let mut params = json!({
+        "profile": PROFILE,
+        "settles": result_step,
+        "outcome": if s.succeeded { "succeeded" } else { "failed" },
+        "evidence": s.evidence,
+        "settled_by": s.settled_by,
+    });
+    if let Some(d) = &s.evidence_sha256 {
+        params["evidence_sha256"] = json!(d);
+    }
+    if let Some(n) = &s.evidence_name {
+        params["evidence_name"] = json!(n);
+    }
+    if let Some(prev) = &s.supersedes {
+        params["supersedes"] = json!(prev);
+    }
+    entry(SETTLED_ACTION_ID, params, s.succeeded)
+}
+
+/// The settlement in force for each settled result (the latest one, after
+/// corrections), by result step: settlement step id.
+pub fn settlements(log: &[u8]) -> std::collections::HashMap<String, String> {
+    let mut current = std::collections::HashMap::new();
+    for line in String::from_utf8_lossy(log).lines() {
+        let Ok(r) = cleimesh_receipt::Receipt::parse(line) else { continue };
+        if r.action_id == SETTLED_ACTION_ID {
+            if let Some(s) = r.params["settles"].as_str() {
+                current.insert(s.to_string(), r.step_id.clone());
+            }
+        }
+    }
+    current
+}
+
+/// Key of a call by tool and exact arguments: two calls with the same key
+/// would do the same thing.
+pub fn call_key(tool: &str, input_sha256: &str) -> String {
+    format!("{tool}\n{input_sha256}")
+}
+
+/// Calls cut at their time limit whose outcome is still unknown, by
+/// `call_key`: result step. Running one of them again could do it twice.
+pub fn unknown_calls(log: &[u8]) -> std::collections::HashMap<String, String> {
+    let mut decided: std::collections::HashMap<String, String> = Default::default();
+    let mut open: std::collections::HashMap<String, String> = Default::default();
+    for line in String::from_utf8_lossy(log).lines() {
+        let Ok(r) = cleimesh_receipt::Receipt::parse(line) else { continue };
+        let p = &r.params;
+        if r.action_id == DECISION_ACTION_ID && p["decision"] == "allowed" {
+            if let (Some(t), Some(i)) = (p["tool"].as_str(), p["input_sha256"].as_str()) {
+                decided.insert(r.step_id.clone(), call_key(t, i));
+            }
+        } else if r.action_id == RESULT_ACTION_ID && p["observed"]["outcome"] == "unknown" {
+            if let Some(k) = p["decision_step"].as_str().and_then(|d| decided.get(d)) {
+                open.insert(k.clone(), r.step_id.clone());
+            }
+        } else if r.action_id == SETTLED_ACTION_ID {
+            if let Some(s) = p["settles"].as_str() {
+                open.retain(|_, v| v != s);
+            }
+        }
+    }
+    open
 }
 
 /// Result receipts whose outcome is still unknown: cut at the time limit
@@ -432,6 +503,7 @@ pub fn unsettled(log: &[u8]) -> Vec<String> {
     open
 }
 
+/// Receipt of a human clearing `holder`'s taint (C6).
 pub(crate) fn taint_cleared(holder: &str, reason: &str) -> Entry {
     entry(TAINT_CLEARED_ACTION_ID, json!({"profile": PROFILE, "holder": holder, "reason": reason}), true)
 }

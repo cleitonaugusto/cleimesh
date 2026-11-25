@@ -58,15 +58,21 @@ check "a changed receipt makes verification fail" '! cleimesh audit verify >/dev
 echo; echo "== 5. Timeout: outcome not known (about 60 s)"
 fresh
 add_apc --taints read_ticket --clean-only slow_operation
-OUT=$(run_agent '[["slow_operation",{"seconds":75}]]')
+OUT=$(run_agent '[["slow_operation",{"seconds":75}],["slow_operation",{"seconds":75}]]')
 echo "$OUT" | sed 's/^/    /' | cut -c1-150
 check "the call is cut at the token's time limit, and the agent is told the outcome is unknown" 'echo "$OUT" | grep -q "timed out after 60000 ms; outcome unknown"'
+check "retrying the same call while its outcome is unknown is refused (it could happen twice)" 'echo "$OUT" | grep -q "could do it twice"'
 RES=$(jq -c 'select(.action_id=="cleimesh.tool_result")' "$(LOG)" | head -1)
 check "the result receipt records the outcome as unknown, not as failed" '[ "$(echo "$RES" | jq -r .params.observed.outcome)" = "unknown" ]'
 STEP=$(echo "$RES" | jq -r .step_id)
-cleimesh audit settle "$STEP" --outcome succeeded --evidence "operation found when re-read out of band" >/dev/null 2>&1
-check "a person settles it later, linked to that result, with the evidence" 'jq -e --arg s "$STEP" "select(.action_id==\"cleimesh.tool_settled\" and .params.settles==\$s and .params.outcome==\"succeeded\")" "$(LOG)" >/dev/null'
-check "it can be settled only once, and the chain still verifies" '! cleimesh audit settle "$STEP" --outcome failed --evidence again >/dev/null 2>&1 && cleimesh audit verify >/dev/null 2>&1'
+printf 'op,status\nslow-1,done\n' > "$HOME/statement.csv"
+cleimesh audit settle "$STEP" --outcome succeeded --evidence "operation found when re-read out of band" --evidence-file "$HOME/statement.csv" --by "ops-reviewer" >/dev/null 2>&1
+SET=$(jq -c --arg s "$STEP" 'select(.action_id=="cleimesh.tool_settled" and .params.settles==$s)' "$(LOG)" | head -1)
+check "a person settles it later, linked to that result, with the evidence" '[ "$(echo "$SET" | jq -r .params.outcome)" = "succeeded" ]'
+check "the settlement names who settled it and the digest of the document checked" '[ "$(echo "$SET" | jq -r .params.settled_by)" = "ops-reviewer" ] && [ "$(echo "$SET" | jq -r .params.evidence_sha256)" = "$(sha256sum "$HOME/statement.csv" | cut -d" " -f1)" ]'
+check "it can't be settled twice, and the chain still verifies" '! cleimesh audit settle "$STEP" --outcome failed --evidence again >/dev/null 2>&1 && cleimesh audit verify >/dev/null 2>&1'
+cleimesh audit settle "$STEP" --outcome failed --evidence "reversed by the provider the next day" --correct >/dev/null 2>&1
+check "a late effect is recorded as a correction linked to the first settlement, both kept" '[ "$(jq -c --arg s "$STEP" "select(.action_id==\"cleimesh.tool_settled\" and .params.settles==\$s)" "$(LOG)" | wc -l)" = 2 ] && [ "$(jq -r --arg s "$STEP" "select(.action_id==\"cleimesh.tool_settled\" and .params.settles==\$s) | .params.supersedes // empty" "$(LOG)")" = "$(echo "$SET" | jq -r .step_id)" ] && cleimesh audit verify >/dev/null 2>&1'
 
 echo; echo "== $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

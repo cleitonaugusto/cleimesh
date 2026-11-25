@@ -323,6 +323,10 @@ pub struct CleiMeshNode {
     /// Holders that received untrusted content, by the decision step of the
     /// call that tainted them (C6); rebuilt from the receipt log on start.
     tainted: HashMap<String, String>,
+    /// Calls cut at their time limit and not settled since, by
+    /// `receipts::call_key`: an identical call is refused until a person
+    /// settles the first, so an unknown outcome is never doubled.
+    unknown: HashMap<String, String>,
     /// Calls each peer has running here, capped at `MAX_IN_FLIGHT_PER_PEER`.
     in_flight: HashMap<PeerId, usize>,
     /// Shutdown signal
@@ -341,6 +345,10 @@ impl CleiMeshNode {
         let aat_key = node_key::aat_signing_key(&keypair)?;
         let tainted = match &config.receipts_path {
             Some(path) => std::fs::read(path).map(|log| receipts::tainted_holders(&log)).unwrap_or_default(),
+            None => HashMap::new(),
+        };
+        let unknown = match &config.receipts_path {
+            Some(path) => std::fs::read(path).map(|log| receipts::unknown_calls(&log)).unwrap_or_default(),
             None => HashMap::new(),
         };
         let receipts = match &config.receipts_path {
@@ -390,6 +398,7 @@ impl CleiMeshNode {
             replay_guard: aat::ReplayGuard::new(),
             receipts,
             tainted,
+            unknown,
             in_flight: HashMap::new(),
             shutdown_tx: None,
             reconnect_attempts: HashMap::new(),
@@ -826,8 +835,15 @@ impl CleiMeshNode {
         };
         let call = receipts::Call::new(caller, request, &self.aat_key);
         let purpose_chars = request.context.as_ref().and_then(|c| c.purpose.as_ref()).map_or(0, |p| p.chars().count());
+        let pending = self.unknown.get(&receipts::call_key(&request.tool_name, &receipts::json_sha256(&request.payload))).cloned();
         let authorized = if purpose_chars > receipts::MAX_PURPOSE_CHARS {
             Err(format!("purpose longer than {} characters", receipts::MAX_PURPOSE_CHARS))
+        } else if let Some(step) = pending {
+            // A retry of a call whose outcome is unknown could do it twice.
+            Err(format!(
+                "{} refused: the same call timed out at receipt {} and whether it took effect is unknown; running it again could do it twice. A person settles it first: cleimesh audit settle {} --outcome succeeded|failed --evidence \"...\"",
+                request.tool_name, step, step
+            ))
         } else {
             self.authorize(peer, request, if external.is_some() { EXTERNAL_TIMEOUT_MS } else { EXECUTION_TIMEOUT_MS })
         };
@@ -903,6 +919,7 @@ impl CleiMeshNode {
             Err(response) => return response,
         };
         let request_id = request.request_id.clone();
+        let key = receipts::call_key(&request.tool_name, &receipts::json_sha256(&request.payload));
         match tokio::time::timeout(sandbox.max_execution_time, run(request)).await {
             Ok(response) => {
                 self.conclude(outcome, &response, &Default::default());
@@ -913,7 +930,9 @@ impl CleiMeshNode {
                 // and the receipt says so instead of recording a failure.
                 let after = sandbox.max_execution_time.as_millis() as u64;
                 let (step, taints) = (outcome.decision_step().to_string(), outcome.taints.clone());
-                self.record(outcome.timed_out(after));
+                let entry = outcome.timed_out(after);
+                self.unknown.insert(key, entry.step_id.clone());
+                self.record(entry);
                 for holder in taints {
                     self.tainted.insert(holder, step.clone());
                 }
@@ -945,16 +964,17 @@ impl CleiMeshNode {
         &self.tainted
     }
 
-    /// A human decision that `holder` (JWK thumbprint URI) may use
-    /// clean-only tools again, recorded as a receipt. Errors if the receipt
-    /// can't be written: an unrecorded clearing must not take effect.
     /// Records a person's settlement of a result whose outcome was unknown.
-    pub fn settle(&mut self, result_step: &str, succeeded: bool, evidence: &str) -> std::result::Result<(), String> {
+    pub fn settle(&mut self, result_step: &str, settlement: &receipts::Settlement) -> std::result::Result<(), String> {
         let log = self.receipts.as_mut().ok_or("no receipt log")?;
-        log.append(receipts::settled(result_step, succeeded, evidence)).map_err(|e| format!("settlement not recorded: {}", e))?;
+        log.append(receipts::settled(result_step, settlement)).map_err(|e| format!("settlement not recorded: {}", e))?;
+        self.unknown.retain(|_, v| v != result_step);
         Ok(())
     }
 
+    /// A human decision that `holder` (JWK thumbprint URI) may use
+    /// clean-only tools again, recorded as a receipt. Errors if the receipt
+    /// can't be written: an unrecorded clearing must not take effect.
     pub fn clear_taint(&mut self, holder: &str, reason: &str) -> std::result::Result<(), String> {
         if let Some(log) = self.receipts.as_mut() {
             log.append(receipts::taint_cleared(holder, reason)).map_err(|e| format!("clearing not recorded: {}", e))?;

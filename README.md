@@ -229,6 +229,16 @@ cleimesh taint list
 cleimesh taint clear <agent-peer-id> --reason "mail reviewed"   # a human decision, recorded as a receipt
 ```
 
+A tainted agent doesn't have to lose a tool entirely. `--when-tainted` keeps a narrower form of it, with the
+values fixed in the token: every argument the call carries must be named, so a `cc` nobody listed is refused.
+
+```sh
+cleimesh mcp add mail --taints get_emails_content --clean-only send_email \
+  --when-tainted send_email.recipients=boss@corp.test --when-tainted send_email.subject='*' \
+  --when-tainted send_email.body='*' -- mcp-email-server stdio
+# after reading a mail: send_email to boss@corp.test goes through, anywhere else is refused
+```
+
 ## Documentation
 
 | | |
@@ -284,7 +294,7 @@ Most of the enforcement cost is the two receipt fsyncs.
 - It doesn't make an agent *want* the right thing. It contains what a tool can reach and proves what happened.
 - An action allowed by the token can still be the wrong action (an allowed email with the wrong content). Human approval for risky actions is on the roadmap.
 - It only isolates tools that run in its sandbox. Native MCP servers behind `mcp wrap` go through the token and leave receipts, but are not isolated; anything else, not even that.
-- Taint approximates "the agent read untrusted content" by "the node returned output of a `--taints` tool to this chain": content that reaches the agent some other way doesn't taint it. It is coarse on purpose: after reading a mail the agent loses clean-only tools until a human clears it. The policy is only as good as the tools' labels.
+- Taint approximates "the agent read untrusted content" by "the node returned output of a `--taints` tool to this chain": content that reaches the agent some other way doesn't taint it. It is coarse on purpose: after reading a mail the agent loses clean-only tools until a human clears it, except what `--when-tainted` keeps with values fixed in the token. The policy is only as good as the tools' labels.
 - Randomness inside the sandbox is seeded and the seed is in the receipt, so a tool must not generate secrets there. Calls that read directories or use the network don't replay yet; the call's input stays with the data controller, not in the receipt.
 - Someone with disk access could roll back both the log and its head together; keep a head elsewhere (`audit head`) and check with `audit verify --head`.
 - Taint is kept per node: the same token used on two nodes is tainted separately.

@@ -164,7 +164,12 @@ granted directory, file names never. Tests: `cleimesh-p2p/tests/report.rs`,
   logs, is tainted separately. Servers added with `cleimesh mcp add` run
   behind one wrapper (`mcp wrap --servers`), so they share one view.
 - **Coarse taint.** After reading one mail, the agent loses every clean-only
-  tool until a human clears it. That is the price of being deterministic.
+  tool until a human clears it, except what the token keeps for a tainted
+  agent (`when_tainted`, `mcp add --when-tainted TOOL.ARG=VALUES`): argument
+  values fixed in the token, closed world (an argument the rule doesn't name
+  is refused), checked on every link of the chain, and named in the receipt
+  (`tainted_by`). Keep those values fixed: "reply to the sender" is not a
+  safe rule, since the sender can be the attacker.
 - **A dishonest node, for calls that can't replay.** Calls that read
   directories or use the network don't replay yet; for them, a receipt only
   proves what the node key signed.

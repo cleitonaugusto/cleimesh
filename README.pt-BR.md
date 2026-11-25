@@ -190,6 +190,17 @@ cleimesh taint list
 cleimesh taint clear <peer-id-do-agente> --motivo "e-mail revisado"   # decisão humana, registrada em recibo
 ```
 
+Um agente contaminado não precisa perder a tool inteira. `--when-tainted` mantém uma forma mais estreita dela, com
+os valores fixos no token: todo argumento que a chamada traz precisa estar nomeado, então um `cc` que ninguém listou
+é recusado.
+
+```sh
+cleimesh mcp add mail --taints get_emails_content --clean-only send_email \
+  --when-tainted send_email.recipients=chefe@corp.test --when-tainted send_email.subject='*' \
+  --when-tainted send_email.body='*' -- mcp-email-server stdio
+# depois de ler um e-mail: send_email para chefe@corp.test passa, para qualquer outro é recusado
+```
+
 ## Documentação
 
 | | |
@@ -245,7 +256,7 @@ A maior parte do custo da aplicação são os dois fsync dos recibos.
 - Não faz o agente *querer* a coisa certa. Ele limita o que a tool alcança e prova o que aconteceu.
 - Uma ação permitida pelo token ainda pode ser a ação errada (um e-mail permitido com o conteúdo errado). Aprovação humana para ações de risco está no plano.
 - Só isola tools que rodam no sandbox dele. Servidores MCP nativos atrás do `mcp wrap` passam pelo token e deixam recibo, mas não ficam isolados; o resto, nem isso.
-- A contaminação aproxima "o agente leu conteúdo não confiável" por "o nó devolveu a saída de uma tool `--taints` a essa cadeia": conteúdo que chega ao agente por outro caminho não contamina. É grossa de propósito: depois de ler um e-mail, o agente perde as tools `--clean-only` até um humano liberar. A política vale o que valem os rótulos das tools.
+- A contaminação aproxima "o agente leu conteúdo não confiável" por "o nó devolveu a saída de uma tool `--taints` a essa cadeia": conteúdo que chega ao agente por outro caminho não contamina. É grossa de propósito: depois de ler um e-mail, o agente perde as tools `--clean-only` até um humano liberar, exceto o que `--when-tainted` mantém com valores fixos no token. A política vale o que valem os rótulos das tools.
 - A aleatoriedade dentro do sandbox tem semente, e a semente está no recibo: uma tool não deve gerar segredos lá dentro. Chamadas que leem pastas ou usam rede ainda não reexecutam; a entrada da chamada fica com o controlador dos dados, não no recibo.
 - Quem tem acesso ao disco poderia voltar o log e a cabeça juntos; guarde uma cabeça em outro lugar (`audit head`) e confira com `audit verify --head`.
 - A contaminação é por nó: o mesmo token usado em dois nós é contaminado separadamente.

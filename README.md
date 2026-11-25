@@ -9,12 +9,35 @@
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23547249.svg)](https://doi.org/10.5281/zenodo.23547249)
 
+### Your agent read a poisoned page. What did it do next, and can you prove it?
+
+Your team gives agents real tools: mail, files, payments, prod. One web page, ticket or email with instructions hidden in it, and the agent acts on them with all of your permissions. Afterwards the log is whatever the agent's host wrote down, and nobody can show what the agent was allowed to do.
+
+**CleiMesh stops the next step and proves the last one.**
+
+- **It stops the action, not the prompt.** Once an agent reads untrusted content through one MCP server, it can't send, write or pay through another until a person clears it. The limit sits outside the model, so no prompt talks it out of it.
+- **Every call leaves a signed receipt.** What the agent was allowed to do, what it read, what ran, what was refused. One edited, removed or reordered line fails verification, and an auditor checks any receipt with your public key alone.
+- **One command per server.** Any MCP server, local or remote, in Claude Code or from a shell. Nothing to change in the agent.
+
 > **What your agent reads can't decide what it does.**
-> Signed limits on every MCP tool call, enforced outside the model, with a receipt for each one.
 
 *[Leia em português](README.pt-BR.md)*
 
-![Four acts: a subagent granted only ./project/docs is blocked from ~/.ssh/id_rsa, from writing and from widening its token; a mail assistant reads a mail with injected instructions and from then on cannot write, not even through a fresh helper; receipts verify, replay and catch an edited log, with a privacy report; audit suggest narrows the token and a human clears the taint on the record](examples/demo/demo.gif)
+![Two official MCP servers added with one command each; the agent fetches a poisoned page, reads a secret, and its write of the secret is refused on the other server; the receipts say why](examples/mcp-add/mcp-add.gif)
+
+## For engineers
+
+- **Keep your agent and your servers.** `cleimesh mcp add` puts each server behind a signed token; the agent calls tools as usual.
+- **Labels you can read.** `--taints` for tools that read the outside world, `--clean-only` for tools that act. Without them, the labels come from the hints each server already declares, and `mcp add` tells you which.
+- **When the agent must still act after reading,** `--when-tainted` lets it reach only the destinations the token fixes: the boss gets the summary, the address in the email doesn't.
+- **Timeouts are honest.** A call cut at its limit is recorded as *unknown*, not as failed, and the same call is refused until someone checks what happened and settles it, so it never runs twice by accident.
+
+## For security, risk and compliance
+
+- **A record a third party can check.** Receipts are signed and hash-chained, and the log commits to an RFC 6962 Merkle tree: hand an auditor one receipt and a signed tree head, and they verify it without the rest of the log (`audit prove`, `audit verify-inclusion`).
+- **Built on open drafts, with the vectors to prove it.** Tokens pass all 229 byte-exact vectors of the conformance suite for the IETF draft [Attenuating Agent Tokens](https://datatracker.ietf.org/doc/draft-niyikiza-oauth-attenuating-agent-tokens/) (-02) ([how to run it](cleimesh-aat/tests/vectors_02.rs)); receipts reproduce the test vectors of [draft-sahu-agent-action-receipts](https://datatracker.ietf.org/doc/draft-sahu-agent-action-receipts/) byte for byte ([BENCHMARKS.md](BENCHMARKS.md)).
+- **Questions an auditor asks, answered from the log:** who authorized the agent, on whose behalf, whose personal data each call declared it touched, what was refused and why. `cleimesh audit report` prints everything about one data subject, or one agent's record of operations (LGPD art. 37, GDPR art. 30). `audit export` sends it to your SIEM as OCSF events.
+- **Try it in two minutes,** in Docker, against a real server: the [evaluation kit](examples/evaluation/README.md) checks 19 properties and prints PASS or FAIL for each.
 
 <p align="center">
   <a href="https://leanpub.com/ai-agents-in-a-cage"><img src="docs/assets/book-badge-en.png" alt="The book: AI Agents in a Cage" width="362"></a>
@@ -38,8 +61,6 @@ curl -fsSL https://github.com/cleitonaugusto/cleimesh/releases/latest/download/i
 cleimesh mcp add fetch --taints fetch -- uvx mcp-server-fetch
 cleimesh mcp add fs --clean-only write_file -- npx -y @modelcontextprotocol/server-filesystem ~/work
 ```
-
-![Two official MCP servers added with one command each; the agent fetches a poisoned page, reads a secret, and its write of the secret is refused on the other server; the receipts say why](examples/mcp-add/mcp-add.gif)
 
 Each server now sits behind a signed token, and every call leaves a signed receipt. Once the agent reads a page through `fetch`, it can't write through the filesystem server until a human clears it: what it reads in one server limits what it can do in another ([tested with the official servers](examples/mcp-add/README.md)). More in [Put an existing MCP server behind a token](#put-an-existing-mcp-server-behind-a-token).
 
@@ -74,6 +95,8 @@ The agent acted on its own (power), never went over `$5.00` (control), and every
 ---
 
 ## How it works, in full
+
+![Four acts: a subagent granted only ./project/docs is blocked from ~/.ssh/id_rsa, from writing and from widening its token; a mail assistant reads a mail with injected instructions and from then on cannot write, not even through a fresh helper; receipts verify, replay and catch an edited log, with a privacy report; audit suggest narrows the token and a human clears the taint on the record](examples/demo/demo.gif)
 
 AI agents (Claude Code, Cursor, LangGraph, CrewAI...) call third-party tools and hand work to other agents, almost always **with all of your permissions**. One malicious tool, or one prompt injection hidden in an email the agent read, can read `~/.ssh` and `.env`, delete files or leak data. Afterwards nobody can prove which agent did what, on whose behalf.
 

@@ -9,12 +9,35 @@
 [![Licença: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#licença)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23547249.svg)](https://doi.org/10.5281/zenodo.23547249)
 
+### Seu agente leu uma página envenenada. O que ele fez em seguida, e você consegue provar?
+
+Sua equipe dá ferramentas reais aos agentes: e-mail, arquivos, pagamentos, produção. Basta uma página, um chamado ou um e-mail com instruções escondidas, e o agente obedece com todas as suas permissões. Depois, o log é o que o próprio ambiente do agente anotou, e ninguém consegue mostrar o que o agente tinha permissão de fazer.
+
+**O CleiMesh barra o próximo passo e prova o anterior.**
+
+- **Barra a ação, não o prompt.** Depois que o agente lê conteúdo não confiável por um servidor MCP, ele não consegue enviar, gravar nem pagar por outro até uma pessoa liberar. O limite fica fora do modelo, então nenhum prompt o convence do contrário.
+- **Cada chamada deixa um recibo assinado.** O que o agente podia fazer, o que leu, o que rodou, o que foi recusado. Uma linha editada, removida ou fora de ordem falha na verificação, e um auditor confere qualquer recibo só com a sua chave pública.
+- **Um comando por servidor.** Qualquer servidor MCP, local ou remoto, no Claude Code ou pelo terminal. Nada muda no agente.
+
 > **O que o seu agente lê não decide o que ele faz.**
-> Limites assinados em cada chamada de tool MCP, aplicados fora do modelo, com um recibo para cada uma.
 
 *[Read in English](README.md)*
 
-![Quatro atos: um subagente com acesso só a ./projeto/docs é barrado em ~/.ssh/id_rsa, na escrita e ao ampliar o token; um assistente de e-mail lê um e-mail com prompt injection e daí em diante não consegue gravar, nem por um ajudante novo; os recibos se verificam, se reexecutam e acusam a edição, com relatório LGPD; audit suggest encolhe o token e um humano libera a contaminação com registro](examples/demo/demo-pt.gif)
+![Dois servidores MCP oficiais adicionados com um comando cada; o agente busca uma página envenenada, lê um segredo, e a gravação do segredo é recusada no outro servidor; os recibos dizem por quê](examples/mcp-add/mcp-add.gif)
+
+## Para quem desenvolve
+
+- **Mantenha seu agente e seus servidores.** O `cleimesh mcp add` põe cada servidor atrás de um token assinado; o agente chama as tools como sempre.
+- **Rótulos que você lê.** `--taints` para tools que leem o mundo de fora, `--clean-only` para tools que agem. Sem eles, os rótulos vêm das dicas que cada servidor já declara, e o `mcp add` diz de onde veio cada um.
+- **Quando o agente ainda precisa agir depois de ler,** o `--when-tainted` deixa ele alcançar só os destinos que o token fixa: o chefe recebe o resumo, o endereço que veio no e-mail não.
+- **Timeout honesto.** Uma chamada cortada no limite fica registrada como *desconhecida*, não como falha, e a mesma chamada é recusada até alguém conferir o que aconteceu e registrar o resultado, para que ela nunca rode duas vezes por acidente.
+
+## Para segurança, risco e compliance
+
+- **Um registro que um terceiro confere.** Os recibos são assinados e encadeados por hash, e o log se compromete numa árvore Merkle RFC 6962: entregue ao auditor um recibo e uma cabeça de árvore assinada, e ele verifica sem o resto do log (`audit prove`, `audit verify-inclusion`).
+- **Construído sobre drafts abertos, com os vetores como prova.** Os tokens passam nos 229 vetores byte a byte da suíte de conformidade do draft IETF [Attenuating Agent Tokens](https://datatracker.ietf.org/doc/draft-niyikiza-oauth-attenuating-agent-tokens/) (-02) ([como rodar](cleimesh-aat/tests/vectors_02.rs)); os recibos reproduzem byte a byte os vetores de teste do [draft-sahu-agent-action-receipts](https://datatracker.ietf.org/doc/draft-sahu-agent-action-receipts/) ([BENCHMARKS.md](BENCHMARKS.md)).
+- **As perguntas do auditor, respondidas pelo log:** quem autorizou o agente, em nome de quem, de quem são os dados pessoais que cada chamada declarou tocar, o que foi recusado e por quê. O `cleimesh audit report` mostra tudo sobre um titular, ou o registro das operações de um agente (LGPD art. 37, GDPR art. 30). O `audit export` manda para o seu SIEM como eventos OCSF.
+- **Teste em dois minutos,** no Docker, contra um servidor real: o [kit de avaliação](examples/evaluation/README.md) (em inglês) confere 19 propriedades e imprime PASS ou FAIL para cada uma.
 
 <p align="center">
   <a href="https://leanpub.com/agentes-de-ia-na-jaula"><img src="docs/assets/book-badge-pt.png" alt="O livro: Agentes de IA na jaula" width="378"></a>
@@ -39,7 +62,7 @@ cleimesh mcp add fetch --taints fetch -- uvx mcp-server-fetch
 cleimesh mcp add fs --clean-only write_file -- npx -y @modelcontextprotocol/server-filesystem ~/trabalho
 ```
 
-![Dois servidores MCP oficiais adicionados com um comando cada; o agente busca uma página envenenada, lê um segredo, e a gravação do segredo é recusada no outro servidor; os recibos dizem por quê](examples/mcp-add/mcp-add.gif)
+
 
 Cada servidor passa a ficar atrás de um token assinado, e cada chamada deixa um recibo assinado. Depois que o agente lê uma página pelo `fetch`, ele não consegue gravar pelo servidor de arquivos até um humano liberar: o que ele lê num servidor limita o que ele faz em outro ([testado com os servidores oficiais](examples/mcp-add/README.md), em inglês). Mais em [Pôr um servidor MCP existente atrás de um token](#pôr-um-servidor-mcp-existente-atrás-de-um-token).
 
@@ -48,6 +71,8 @@ Sem `--taints` nem `--clean-only`, o `mcp add` tira os rótulos das dicas que o 
 Servidores remotos (streamable HTTP) entram atrás do token do mesmo jeito: `cleimesh mcp add github --url https://api.example.com/mcp --bearer-env GITHUB_MCP_TOKEN`. Só `https`, ou `http` simples para esta máquina. O token Bearer é lido da variável de ambiente indicada quando o wrapper conecta; só o nome da variável é salvo, e os recibos identificam o servidor pelo digest da URL.
 
 O próprio wrapper pode ser servido por HTTP, para clientes e agentes que só falam HTTP: `cleimesh mcp wrap --servers servers.json --listen 127.0.0.1:8765 --listen-token-env WRAP_TOKEN` serve `/mcp` e recusa qualquer requisição sem aquele token Bearer (sem ele, nem sobe: quem alcança o wrapper age como o agente). Todas as sessões HTTP compartilham um nó, um log de recibos e uma visão de contaminação. Fora desta máquina, ponha TLS na frente.
+
+![Quatro atos: um subagente com acesso só a ./projeto/docs é barrado em ~/.ssh/id_rsa, na escrita e ao ampliar o token; um assistente de e-mail lê um e-mail com prompt injection e daí em diante não consegue gravar, nem por um ajudante novo; os recibos se verificam, se reexecutam e acusam a edição, com relatório LGPD; audit suggest encolhe o token e um humano libera a contaminação com registro](examples/demo/demo-pt.gif)
 
 Agentes de IA (Claude Code, Cursor, LangGraph, CrewAI...) chamam tools de terceiros e delegam tarefas a outros agentes, quase sempre **com todas as suas permissões**. Uma tool maliciosa, ou uma prompt injection escondida num e-mail que o agente leu, pode ler `~/.ssh` e `.env`, apagar arquivos ou vazar dados. E depois ninguém consegue provar qual agente fez o quê, em nome de quem.
 

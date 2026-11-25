@@ -24,6 +24,15 @@
 
 ## Qualquer servidor MCP, um comando
 
+No Claude Code, como plugin (ele roda um servidor `cleimesh` para todos os servidores que você adicionar, e traz o `/cleimesh:add`):
+
+```
+/plugin marketplace add cleitonaugusto/cleimesh
+/plugin install cleimesh@cleimesh
+```
+
+Ou pelo terminal:
+
 ```sh
 curl -fsSL https://github.com/cleitonaugusto/cleimesh/releases/latest/download/install.sh | sh
 cleimesh mcp add fetch --taints fetch -- uvx mcp-server-fetch

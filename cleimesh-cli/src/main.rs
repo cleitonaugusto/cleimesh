@@ -321,8 +321,10 @@ enum McpCommands {
         /// agent's token, so whoever reaches it acts as the agent
         #[arg(long, value_name = "VAR")]
         listen_token_env: Option<String>,
-        /// The MCP server's command and its arguments, after `--`
-        #[arg(last = true, required_unless_present = "servers", value_name = "COMMAND")]
+        /// The MCP server's command and its arguments, after `--`. With no
+        /// command, --token or --servers: the servers `mcp add` keeps
+        /// (<config dir>/cleimesh/mcp/servers.json), none if it isn't there yet
+        #[arg(last = true, value_name = "COMMAND")]
         command: Vec<String>,
     },
     /// One command: put an MCP server behind a token. Creates the node and
@@ -1084,7 +1086,7 @@ fn taint(cmd: TaintCommands) -> Result<()> {
     let config = P2PConfig {
         listen_addresses: Vec::new(),
         enable_mdns: false,
-        identity_key_path: Some(identity_key_path(identity, node_key::NODE_KEY_FILE)?),
+        identity_key_path: Some(identity_key_path(identity.clone(), node_key::NODE_KEY_FILE)?),
         receipts_path: Some(receipts_path(receipts)?),
         ..P2PConfig::default()
     };
@@ -1158,7 +1160,7 @@ async fn mcp_serve(tokens: Vec<PathBuf>, holder: Option<PathBuf>, node: Option<S
             let config = P2PConfig {
                 listen_addresses: Vec::new(),
                 enable_mdns: false,
-                identity_key_path: Some(identity_key_path(identity, node_key::NODE_KEY_FILE)?),
+                identity_key_path: Some(identity_key_path(identity.clone(), node_key::NODE_KEY_FILE)?),
                 receipts_path: Some(receipts_path(receipts)?),
                 ..P2PConfig::default()
             };
@@ -1286,17 +1288,36 @@ async fn mcp_wrap(
     let config = P2PConfig {
         listen_addresses: Vec::new(),
         enable_mdns: false,
-        identity_key_path: Some(identity_key_path(identity, node_key::NODE_KEY_FILE)?),
+        identity_key_path: Some(identity_key_path(identity.clone(), node_key::NODE_KEY_FILE)?),
         receipts_path: Some(receipts_path(receipts)?),
         ..P2PConfig::default()
     };
     let node = CleiMeshNode::new(config, AgentIdentity::new("cli-mcp-wrap"))?;
 
+    // Nothing named: the servers `mcp add` keeps, as a plugin or client entry
+    // starts it before any server is added.
+    let default_servers = servers.is_none() && command.is_empty() && tokens.is_empty();
+    let servers = if default_servers {
+        let path = identity_key_path(identity.clone(), node_key::NODE_KEY_FILE)?.parent().map(|d| d.join("mcp").join("servers.json")).ok_or_else(|| anyhow::anyhow!("No config directory; pass --servers"))?;
+        if !path.exists() {
+            eprintln!("cleimesh mcp wrap: no servers yet ({}); add one with `cleimesh mcp add NAME -- COMMAND`, then restart this server", path.display());
+        }
+        Some(path)
+    } else {
+        if servers.is_none() && command.is_empty() {
+            return Err(anyhow::anyhow!("pass the MCP server's command after `--`, or --servers").into());
+        }
+        servers
+    };
     let (tokens, mut backends) = match servers {
         Some(path) => {
-            let file: ServersFile = serde_json::from_str(&std::fs::read_to_string(&path).map_err(|e| anyhow::anyhow!("Cannot read {}: {}", path.display(), e))?)
-                .map_err(|e| anyhow::anyhow!("Invalid {}: {}", path.display(), e))?;
-            if file.servers.is_empty() {
+            let file: ServersFile = if default_servers && !path.exists() {
+                ServersFile::default()
+            } else {
+                serde_json::from_str(&std::fs::read_to_string(&path).map_err(|e| anyhow::anyhow!("Cannot read {}: {}", path.display(), e))?)
+                    .map_err(|e| anyhow::anyhow!("Invalid {}: {}", path.display(), e))?
+            };
+            if file.servers.is_empty() && !default_servers {
                 return Err(anyhow::anyhow!("{} lists no servers (add one with `cleimesh mcp add`)", path.display()).into());
             }
             let mut backends = Vec::new();

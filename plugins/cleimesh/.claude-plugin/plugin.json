@@ -1,0 +1,10 @@
+{
+  "name": "cleimesh",
+  "displayName": "CleiMesh",
+  "description": "Put any MCP server behind a signed token: what the agent reads through one server limits what it can do through another, and every call leaves a signed receipt.",
+  "author": { "name": "Cleiton Augusto", "url": "https://github.com/cleitonaugusto" },
+  "homepage": "https://github.com/cleitonaugusto/cleimesh",
+  "repository": "https://github.com/cleitonaugusto/cleimesh",
+  "license": "MIT OR Apache-2.0",
+  "keywords": ["security", "mcp", "prompt-injection", "taint", "receipts"]
+}

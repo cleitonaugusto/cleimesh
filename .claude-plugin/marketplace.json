@@ -1,0 +1,14 @@
+{
+  "name": "cleimesh",
+  "owner": { "name": "Cleiton Augusto", "url": "https://github.com/cleitonaugusto" },
+  "description": "What your agent reads can't decide what it does: MCP servers behind signed tokens, with taint across servers and signed receipts.",
+  "plugins": [
+    {
+      "name": "cleimesh",
+      "source": "./plugins/cleimesh",
+      "description": "Put any MCP server behind a signed token: what the agent reads through one server limits what it can do through another, and every call leaves a signed receipt.",
+      "category": "security",
+      "tags": ["security", "mcp", "prompt-injection", "audit"]
+    }
+  ]
+}

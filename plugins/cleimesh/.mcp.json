@@ -1,0 +1,5 @@
+{
+  "mcpServers": {
+    "cleimesh": { "command": "cleimesh", "args": ["mcp", "wrap"] }
+  }
+}

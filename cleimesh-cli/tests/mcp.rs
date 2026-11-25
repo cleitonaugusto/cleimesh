@@ -746,3 +746,39 @@ fn mcp_add_takes_labels_from_the_hints_the_server_declares_unless_told_otherwise
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     assert!(grants("c").is_null() || grants("c")["tools"]["file_write"].is_null());
 }
+
+#[tokio::test]
+async fn mcp_wrap_with_nothing_named_serves_the_servers_mcp_add_keeps() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().canonicalize().unwrap();
+    let k = |name: &str| base.join(name);
+    let path = |p: &Path| p.to_str().unwrap().to_string();
+    let exe = env!("CARGO_BIN_EXE_cleimesh");
+    // The node key sits in base/, so the default list is base/mcp/servers.json.
+    let (node, agent) = (k("identity.key"), k("agent.key"));
+    let wrap = || {
+        let mut c = tokio::process::Command::new(exe);
+        c.args(["mcp", "wrap", "--identity", &path(&node), "--holder", &path(&agent), "--receipts", &path(&k("r.jsonl"))]);
+        c
+    };
+    // Nothing added yet: it starts, offers nothing, and says how to add.
+    let client = ().serve(TokioChildProcess::new(wrap()).unwrap()).await.unwrap();
+    assert!(client.list_all_tools().await.unwrap().is_empty());
+    client.cancel().await.unwrap();
+
+    let (inner_node, inner_agent, inner_chain) = (k("in-node.key"), k("in-agent.key"), k("in.json"));
+    cleimesh(&["token", "issue", &peer_id(&inner_agent), "--tool", "echo", "--identity", &path(&inner_node), "--output", &path(&inner_chain)]);
+    cleimesh(&[
+        "mcp", "add", "srv", "--print", "--identity", &path(&node), "--holder", &path(&agent), "--", exe, "mcp", "serve", "--token", &path(&inner_chain),
+        "--holder", &path(&inner_agent), "--identity", &path(&inner_node), "--receipts", &path(&k("in.jsonl")),
+    ]);
+    assert!(k("mcp").join("servers.json").exists());
+    let client = ().serve(TokioChildProcess::new(wrap()).unwrap()).await.unwrap();
+    let tools: Vec<String> = client.list_all_tools().await.unwrap().iter().map(|t| t.name.to_string()).collect();
+    assert!(tools.iter().any(|t| t == "echo"), "{tools:?}");
+    client.cancel().await.unwrap();
+
+    // A token without the server's command is an error, not an empty wrapper.
+    let out = Command::new(exe).args(["mcp", "wrap", "--token", &path(&inner_chain), "--identity", &path(&node)]).output().unwrap();
+    assert!(!out.status.success() && String::from_utf8_lossy(&out.stderr).contains("pass the MCP server's command"), "{}", String::from_utf8_lossy(&out.stderr));
+}

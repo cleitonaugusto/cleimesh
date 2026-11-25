@@ -234,8 +234,8 @@ values fixed in the token: every argument the call carries must be named, so a `
 
 ```sh
 cleimesh mcp add mail --taints get_emails_content --clean-only send_email \
-  --when-tainted send_email.recipients=boss@corp.test --when-tainted send_email.subject='*' \
-  --when-tainted send_email.body='*' -- mcp-email-server stdio
+  --when-tainted send_email.account_name=work --when-tainted send_email.recipients=boss@corp.test \
+  --when-tainted send_email.subject='*' --when-tainted send_email.body='*' -- mcp-email-server stdio
 # after reading a mail: send_email to boss@corp.test goes through, anywhere else is refused
 ```
 

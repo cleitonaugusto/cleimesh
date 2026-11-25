@@ -196,8 +196,8 @@ os valores fixos no token: todo argumento que a chamada traz precisa estar nomea
 
 ```sh
 cleimesh mcp add mail --taints get_emails_content --clean-only send_email \
-  --when-tainted send_email.recipients=chefe@corp.test --when-tainted send_email.subject='*' \
-  --when-tainted send_email.body='*' -- mcp-email-server stdio
+  --when-tainted send_email.account_name=work --when-tainted send_email.recipients=chefe@corp.test \
+  --when-tainted send_email.subject='*' --when-tainted send_email.body='*' -- mcp-email-server stdio
 # depois de ler um e-mail: send_email para chefe@corp.test passa, para qualquer outro é recusado
 ```
 

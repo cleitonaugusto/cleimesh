@@ -350,6 +350,14 @@ enum McpCommands {
         /// on its tools (inferred only when neither flag is given)
         #[arg(long)]
         no_auto_labels: bool,
+        /// A remote MCP server (streamable HTTP) instead of COMMAND: https, or
+        /// http to this machine only
+        #[arg(long, value_name = "URL")]
+        url: Option<String>,
+        /// With --url: the environment variable holding the server's bearer
+        /// token. Only the name is saved; the token is read when connecting
+        #[arg(long, value_name = "VAR", requires = "url")]
+        bearer_env: Option<String>,
         /// Register the wrapper with --approvals DIR: refused tainted calls
         /// wait there for a person to approve each one
         #[arg(long, value_name = "DIR")]
@@ -377,8 +385,8 @@ enum McpCommands {
         /// Receipt log (default: ~/.local/share/cleimesh/receipts/receipts.jsonl)
         #[arg(long, value_name = "FILE")]
         receipts: Option<PathBuf>,
-        /// The MCP server's command and its arguments, after `--`
-        #[arg(last = true, required = true, value_name = "COMMAND")]
+        /// The MCP server's command and its arguments, after `--` (or --url)
+        #[arg(last = true, required_unless_present = "url", conflicts_with = "url", value_name = "COMMAND")]
         command: Vec<String>,
     },
 }
@@ -805,8 +813,8 @@ async fn run(cli: Cli) -> Result<()> {
                 None => mcp_wrap(token, holder, identity, receipts, servers, approvals, command).await?,
             }
         }
-        Commands::Mcp(McpCommands::Add { name, tools, taints, clean_only, when_tainted, no_auto_labels, approvals, ttl, scope, print, dir, holder, identity, receipts, command }) => {
-            mcp_add(McpAdd { name, tools, taints, clean_only, when_tainted, no_auto_labels, approvals, ttl, scope, print, dir, holder, identity, receipts, command }).await?
+        Commands::Mcp(McpCommands::Add { name, tools, taints, clean_only, when_tainted, no_auto_labels, url, bearer_env, approvals, ttl, scope, print, dir, holder, identity, receipts, command }) => {
+            mcp_add(McpAdd { name, tools, taints, clean_only, when_tainted, no_auto_labels, url, bearer_env, approvals, ttl, scope, print, dir, holder, identity, receipts, command }).await?
         }
         Commands::Allowance(cmd) => match cmd {
             AllowanceCommands::Keygen { out } => allowance::keygen(&out)?,
@@ -1173,8 +1181,16 @@ struct ServersFile {
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct ServerEntry {
-    /// The server's command line.
+    /// The server's command line (a local server).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     command: Vec<String>,
+    /// Or the URL of a remote server (streamable HTTP).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    url: Option<String>,
+    /// The environment variable holding the remote server's bearer token:
+    /// only its name is kept here, never the token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    bearer_env: Option<String>,
     /// Its token chain file.
     token: PathBuf,
     /// Each granted tool's definition digest when added (see `mcp::tool_pin`).
@@ -1182,9 +1198,45 @@ struct ServerEntry {
     pins: Option<std::collections::BTreeMap<String, String>>,
 }
 
+/// Where a wrapped server is: a command to run, or a remote URL.
+enum Backend<'a> {
+    Command(&'a [String]),
+    Remote { url: &'a str, bearer_env: Option<&'a str> },
+}
+
+/// A client transport to a remote MCP server: https, or http to this machine
+/// only (development and tests). The bearer token is read from the named
+/// environment variable when the connection is made.
+fn remote_config(url: &str, bearer_env: Option<&str>) -> Result<rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig> {
+    let parsed = url::Url::parse(url).map_err(|e| anyhow::anyhow!("invalid --url {}: {}", url, e))?;
+    let loopback = matches!(parsed.host_str(), Some("127.0.0.1") | Some("localhost") | Some("[::1]") | Some("::1"));
+    if parsed.scheme() != "https" && !(parsed.scheme() == "http" && loopback) {
+        return Err(anyhow::anyhow!("--url {}: use https (plain http only to this machine)", url).into());
+    }
+    let mut config = rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig::with_uri(url.to_string());
+    if let Some(var) = bearer_env {
+        let token = std::env::var(var).map_err(|_| anyhow::anyhow!("--bearer-env {}: that environment variable is not set", var))?;
+        config = config.auth_header(token);
+    }
+    Ok(config)
+}
+
 /// Start one MCP server to wrap, as a client of it.
-async fn start_backend(name: &str, command: &[String], chain: Option<usize>, pins: Option<std::collections::BTreeMap<String, String>>) -> Result<mcp::Wrapped> {
+async fn start_backend(name: &str, backend: Backend<'_>, chain: Option<usize>, pins: Option<std::collections::BTreeMap<String, String>>) -> Result<mcp::Wrapped> {
     use rmcp::ServiceExt;
+    let command = match backend {
+        Backend::Command(command) => command,
+        Backend::Remote { url, bearer_env } => {
+            eprintln!(
+                "cleimesh mcp wrap: {} ({}) is a remote server; the token limits which of its tools and arguments get through, \
+                 and every call is recorded",
+                name, url
+            );
+            let server = ().serve(rmcp::transport::StreamableHttpClientTransport::from_config(remote_config(url, bearer_env)?)).await.map_err(|e| anyhow::anyhow!("{} did not answer as an MCP server: {}", url, e))?;
+            let server_sha256 = cleimesh_receipt::sha256_hex(url.as_bytes());
+            return Ok(mcp::Wrapped { name: name.to_string(), server, server_sha256, chain, pins });
+        }
+    };
     eprintln!(
         "cleimesh mcp wrap: {} ({}) is not sandboxed; the token limits which of its tools and arguments get through, \
          and every call is recorded. The node key and receipt log are in this process, under this OS user",
@@ -1228,11 +1280,15 @@ async fn mcp_wrap(
             }
             let mut backends = Vec::new();
             for (i, (name, entry)) in file.servers.iter().enumerate() {
-                backends.push(start_backend(name, &entry.command, Some(i), entry.pins.clone()).await?);
+                let backend = match &entry.url {
+                    Some(url) => Backend::Remote { url, bearer_env: entry.bearer_env.as_deref() },
+                    None => Backend::Command(&entry.command),
+                };
+                backends.push(start_backend(name, backend, Some(i), entry.pins.clone()).await?);
             }
             (file.servers.into_values().map(|e| e.token).collect::<Vec<_>>(), backends)
         }
-        None => (tokens, vec![start_backend(&command[0], &command, None, None).await?]),
+        None => (tokens, vec![start_backend(&command[0], Backend::Command(&command), None, None).await?]),
     };
     let credentials = if tokens.is_empty() {
         eprintln!("cleimesh mcp wrap: no --token, no tool of the wrapped server is offered");
@@ -1286,6 +1342,8 @@ struct McpAdd {
     clean_only: Vec<String>,
     when_tainted: Vec<String>,
     no_auto_labels: bool,
+    url: Option<String>,
+    bearer_env: Option<String>,
     approvals: Option<PathBuf>,
     ttl: i64,
     scope: String,
@@ -1325,12 +1383,18 @@ async fn mcp_add(mut a: McpAdd) -> Result<()> {
 
     // The server's tools as it describes them now: what is granted, and the
     // definitions pinned, so a later change is noticed.
+    let source = a.url.clone().unwrap_or_else(|| a.command[0].clone());
     let listed = {
-        let mut child = tokio::process::Command::new(&a.command[0]);
-        child.args(&a.command[1..]).stderr(std::process::Stdio::null());
-        let transport = rmcp::transport::TokioChildProcess::new(child).map_err(|e| fail(format!("Cannot start {}: {}", a.command[0], e)))?;
-        let server = ().serve(transport).await.map_err(|e| fail(format!("{} did not start as an MCP server: {}", a.command[0], e)))?;
-        let listed = server.list_all_tools().await.map_err(|e| fail(format!("Cannot list the tools of {}: {}", a.command[0], e)));
+        let server = match &a.url {
+            Some(url) => ().serve(rmcp::transport::StreamableHttpClientTransport::from_config(remote_config(url, a.bearer_env.as_deref())?)).await.map_err(|e| fail(format!("{} did not answer as an MCP server: {}", url, e)))?,
+            None => {
+                let mut child = tokio::process::Command::new(&a.command[0]);
+                child.args(&a.command[1..]).stderr(std::process::Stdio::null());
+                let transport = rmcp::transport::TokioChildProcess::new(child).map_err(|e| fail(format!("Cannot start {}: {}", a.command[0], e)))?;
+                ().serve(transport).await.map_err(|e| fail(format!("{} did not start as an MCP server: {}", a.command[0], e)))?
+            }
+        };
+        let listed = server.list_all_tools().await.map_err(|e| fail(format!("Cannot list the tools of {}: {}", source, e)));
         let _ = server.cancel().await;
         listed?
     };
@@ -1338,7 +1402,7 @@ async fn mcp_add(mut a: McpAdd) -> Result<()> {
         listed.iter().map(|t| t.name.to_string()).collect()
     } else {
         if let Some(t) = a.tools.iter().find(|t| !listed.iter().any(|l| l.name == t.as_str())) {
-            return Err(fail(format!("{} does not list a tool named {}", a.command[0], t)));
+            return Err(fail(format!("{} does not list a tool named {}", source, t)));
         }
         a.tools.clone()
     };
@@ -1406,7 +1470,7 @@ async fn mcp_add(mut a: McpAdd) -> Result<()> {
         }
     }
     if granted.is_empty() {
-        return Err(fail(format!("{} lists no tools; nothing to grant", a.command[0])));
+        return Err(fail(format!("{} lists no tools; nothing to grant", source)));
     }
     for t in a.taints.iter().chain(&a.clean_only) {
         if !granted.contains(t) {
@@ -1450,7 +1514,7 @@ async fn mcp_add(mut a: McpAdd) -> Result<()> {
     let token_path = abs(&dir.join(format!("{}.json", a.name)))?;
     std::fs::write(&token_path, serde_json::to_string_pretty(&ChainFile { chain: vec![root] })?)
         .map_err(|e| fail(format!("Cannot write {}: {}", token_path.display(), e)))?;
-    servers.servers.insert(a.name.clone(), ServerEntry { command: a.command.clone(), token: token_path.clone(), pins: Some(pins) });
+    servers.servers.insert(a.name.clone(), ServerEntry { command: a.command.clone(), url: a.url.clone(), bearer_env: a.bearer_env.clone(), token: token_path.clone(), pins: Some(pins) });
     std::fs::write(&servers_path, serde_json::to_string_pretty(&servers)?).map_err(|e| fail(format!("Cannot write {}: {}", servers_path.display(), e)))?;
 
     let exe = std::env::current_exe().map_err(|e| fail(format!("Cannot find this binary: {}", e)))?;

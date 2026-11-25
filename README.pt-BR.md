@@ -36,6 +36,8 @@ Cada servidor passa a ficar atrás de um token assinado, e cada chamada deixa um
 
 Sem `--taints` nem `--clean-only`, o `mcp add` tira os rótulos das dicas que o servidor declara nas tools (`readOnlyHint`, `destructiveHint`, `openWorldHint`) e diz de qual dica veio cada um. Uma tool que muda coisas e alcança um mundo aberto (ler e-mail pode marcá-lo como lido) recebe os dois rótulos, o lado seguro; num terminal, o `mcp add` pergunta o que ela faz. Uma tool sem dica que decida fica sem rótulo e é nomeada, para você decidir. `--no-auto-labels` desliga isso.
 
+Servidores remotos (streamable HTTP) entram atrás do token do mesmo jeito: `cleimesh mcp add github --url https://api.example.com/mcp --bearer-env GITHUB_MCP_TOKEN`. Só `https`, ou `http` simples para esta máquina. O token Bearer é lido da variável de ambiente indicada quando o wrapper conecta; só o nome da variável é salvo, e os recibos identificam o servidor pelo digest da URL.
+
 Agentes de IA (Claude Code, Cursor, LangGraph, CrewAI...) chamam tools de terceiros e delegam tarefas a outros agentes, quase sempre **com todas as suas permissões**. Uma tool maliciosa, ou uma prompt injection escondida num e-mail que o agente leu, pode ler `~/.ssh` e `.env`, apagar arquivos ou vazar dados. E depois ninguém consegue provar qual agente fez o quê, em nome de quem.
 
 A maioria das ferramentas da área checa a permissão **na porta** (um proxy ou gateway) e depois deixa a tool rodar com acesso total, e os logs de auditoria pedem que você confie em quem os assinou. O CleiMesh junta cinco peças:

@@ -36,6 +36,8 @@ Each server now sits behind a signed token, and every call leaves a signed recei
 
 Without `--taints` or `--clean-only`, `mcp add` takes the labels from the hints the server declares on its tools (`readOnlyHint`, `destructiveHint`, `openWorldHint`) and says which hint each came from. A tool that both changes things and reaches an open world (reading mail can mark it read) gets both labels, the safe side; at a terminal, `mcp add` asks you which it does. A tool with no deciding hint is left unlabelled and named, for you to decide. `--no-auto-labels` turns this off.
 
+Remote servers (streamable HTTP) go behind a token the same way: `cleimesh mcp add github --url https://api.example.com/mcp --bearer-env GITHUB_MCP_TOKEN`. Only `https`, or plain `http` to this machine. The bearer token is read from the named environment variable when the wrapper connects; only the variable's name is saved, and receipts name the server by the digest of its URL.
+
 ## Give your agent an allowance
 
 Your agent is stuck in a demo because you can't trust it with anything real: money, prod, a customer's data. Hand it a **signed allowance** — one tool, one recipient, up to an amount, for a number of calls — and it acts on its own inside the limit, while a prompt-injected or malicious agent can't widen it or lie about it, because the limit is enforced outside the agent, not asked of it.

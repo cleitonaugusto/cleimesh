@@ -7,8 +7,10 @@ use clap::{Parser, Subcommand};
 mod allowance;
 mod demo;
 mod doctor;
+mod guard;
 mod mcp;
 mod ocsf;
+mod view;
 mod setup;
 use std::time::Duration;
 use std::path::{Path, PathBuf};
@@ -195,6 +197,70 @@ enum Commands {
         #[arg(long, short = 'y')]
         yes: bool,
     },
+    /// Guard a coding agent through its own hooks (Claude Code): once a session brings in outside content (a web page, a search, a command that reaches the network, a file outside the project, an MCP tool), it runs only listed shell commands, reads no secrets and rewrites nothing outside the project or in its own instructions, until a person clears it. Every decision is a signed receipt (`cleimesh audit view --receipts <data dir>/cleimesh/receipts/claude-code.jsonl`)
+    #[command(subcommand)]
+    Guard(GuardCommands),
+}
+
+#[derive(Subcommand)]
+enum GuardCommands {
+    /// Add the guard's PreToolUse hook to Claude Code's settings (yours, for every project, or one project's). Shows the change and asks first
+    Install {
+        /// Install for this project only (<DIR>/.claude/settings.json) instead of every project (~/.claude/settings.json)
+        #[arg(long, value_name = "DIR")]
+        project: Option<PathBuf>,
+        /// Print the settings that would be written and change nothing
+        #[arg(long)]
+        print: bool,
+        /// Don't ask
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
+    /// Remove the guard's hook from Claude Code's settings
+    Uninstall {
+        #[arg(long, value_name = "DIR")]
+        project: Option<PathBuf>,
+    },
+    /// Sessions that brought in outside content and are narrowed, with the receipt that did it
+    Status {
+        #[command(flatten)]
+        paths: GuardPathArgs,
+    },
+    /// A person lets sessions act again, recorded as a receipt
+    Clear {
+        /// Session ids (from `cleimesh guard status` or the refusal message)
+        sessions: Vec<String>,
+        /// Every tainted session
+        #[arg(long)]
+        all: bool,
+        /// Why it is safe (recorded in the receipt)
+        #[arg(long)]
+        reason: String,
+        #[command(flatten)]
+        paths: GuardPathArgs,
+    },
+    /// Run by Claude Code before each tool call: reads the hook input on stdin, exits 2 to refuse
+    #[command(hide = true)]
+    Hook {
+        #[command(flatten)]
+        paths: GuardPathArgs,
+    },
+}
+
+#[derive(clap::Args, Clone, Default)]
+struct GuardPathArgs {
+    /// Guard state directory (default: <data dir>/cleimesh/guard)
+    #[arg(long, value_name = "DIR")]
+    dir: Option<PathBuf>,
+    /// Receipt log (default: <data dir>/cleimesh/receipts/claude-code.jsonl)
+    #[arg(long, value_name = "FILE")]
+    receipts: Option<PathBuf>,
+    /// Key that signs the receipts (default: the node key)
+    #[arg(long, value_name = "FILE")]
+    identity: Option<PathBuf>,
+    /// Settings: commands allowed once tainted, read-only MCP tools, trusted paths (default: <config dir>/cleimesh/guard/claude-code.json)
+    #[arg(long, value_name = "FILE")]
+    config: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -469,6 +535,9 @@ enum AuditCommands {
         /// Key of the node that signed it (default: ~/.config/cleimesh/identity.key)
         #[arg(long)]
         identity: Option<PathBuf>,
+        /// The node's public key instead of its key file, as an auditor has it: its PeerId (`cleimesh id`) or 64 hex characters
+        #[arg(long, value_name = "KEY", conflicts_with = "identity")]
+        public_key: Option<String>,
         /// A head saved earlier with `audit head` (kept off this machine):
         /// proves no line it covers was removed since
         #[arg(long, value_name = "FILE")]
@@ -531,6 +600,9 @@ enum AuditCommands {
         /// Node key to trust as the head's signer (default: ~/.config/cleimesh/identity.key)
         #[arg(long)]
         identity: Option<PathBuf>,
+        /// The node's public key instead of its key file, as an auditor has it: its PeerId (`cleimesh id`) or 64 hex characters
+        #[arg(long, value_name = "KEY", conflicts_with = "identity")]
+        public_key: Option<String>,
     },
     /// Remove receipts older than a date (retention), leaving a receipt of
     /// the removal. Run it with the node stopped
@@ -635,6 +707,18 @@ enum AuditCommands {
         /// Suggest even if the log fails verification, with a warning
         #[arg(long = "even-if-broken", visible_alias = "mesmo-com-falhas")]
         mesmo_com_falhas: bool,
+    },
+    /// Write the receipt log as one HTML page to read in a browser: each call with its result, what an untrusted read changed, what was refused and why, and whether the log verifies. Static, no script, nothing loaded from outside
+    View {
+        /// Receipt log (default: ~/.local/share/cleimesh/receipts/receipts.jsonl)
+        #[arg(long, value_name = "FILE")]
+        receipts: Option<PathBuf>,
+        /// Key of the node that signed it, to verify the log (default: ~/.config/cleimesh/identity.key); without it the page says it is not verified
+        #[arg(long)]
+        identity: Option<PathBuf>,
+        /// Where to write the page
+        #[arg(long, short = 'o', value_name = "FILE", default_value = "cleimesh-audit.html")]
+        out: PathBuf,
     },
     /// Show the latest receipts
     Tail {
@@ -865,15 +949,16 @@ async fn run(cli: Cli) -> Result<()> {
         Commands::FlowCheck => flow_check()?,
         Commands::Demo { name, server } => demo::run(&name, server).await?,
         Commands::Audit(cmd) => match cmd {
-            AuditCommands::Verify { receipts, identity, head } => audit_verify(receipts, identity, head)?,
+            AuditCommands::Verify { receipts, identity, public_key, head } => audit_verify(receipts, identity, public_key, head)?,
             AuditCommands::Settle { step, outcome, evidence, evidence_file, by, correct, receipts, identity } => audit_settle(&step, outcome == "succeeded", &evidence, evidence_file, by, correct, receipts, identity)?,
             AuditCommands::Head { receipts } => audit_head(receipts)?,
             AuditCommands::Sth { receipts, identity } => audit_sth(receipts, identity)?,
             AuditCommands::Prove { index, receipts, identity } => audit_prove(index, receipts, identity)?,
-            AuditCommands::VerifyInclusion { bundle, identity } => audit_verify_inclusion(bundle, identity)?,
+            AuditCommands::VerifyInclusion { bundle, identity, public_key } => audit_verify_inclusion(bundle, identity, public_key)?,
             AuditCommands::Replay { step, args, wasm, receipts, identity } => audit_replay(&step, args, wasm, receipts, identity).await?,
             AuditCommands::Prune { antes, dry_run, receipts, identity } => audit_prune(&antes, dry_run, receipts, identity)?,
             AuditCommands::Tail { lines, receipts, json } => audit_tail(lines, receipts, json)?,
+            AuditCommands::View { receipts, identity, out } => audit_view(receipts, identity, out)?,
             AuditCommands::Suggest { token, desde, ate, output, formato, lang, receipts, identity, mesmo_com_falhas } => {
                 audit_suggest(&token, desde, ate, output, &formato, &lang, receipts, identity, mesmo_com_falhas)?
             }
@@ -897,6 +982,7 @@ async fn run(cli: Cli) -> Result<()> {
             dry_run,
             yes,
         )?,
+        Commands::Guard(cmd) => guard_command(cmd)?,
     }
 
     Ok(())
@@ -1722,7 +1808,23 @@ fn audit_prove(index: usize, receipts: Option<PathBuf>, identity: Option<PathBuf
     Ok(())
 }
 
-fn audit_verify_inclusion(bundle: PathBuf, identity: Option<PathBuf>) -> Result<()> {
+/// The key a log or bundle is checked against: the public key an auditor
+/// was given, or the node's key file. With the key file, it must exist: a
+/// verifier never creates one.
+fn verify_anchor(identity: Option<PathBuf>, public_key: Option<String>) -> Result<(cleimesh_aat::VerifyingKey, String)> {
+    if let Some(k) = public_key {
+        let key = node_key::verifying_key_from_str(&k)?;
+        return Ok((key, k));
+    }
+    let path = identity_key_path(identity, node_key::NODE_KEY_FILE)?;
+    if !path.exists() {
+        return Err(anyhow::anyhow!("No node key at {}: pass --identity <file>, or --public-key <PeerId> if you only have the public key", path.display()).into());
+    }
+    let keypair = node_key::load_or_generate(&path)?;
+    Ok((node_key::aat_signing_key(&keypair)?.verifying_key(), keypair.public().to_peer_id().to_string()))
+}
+
+fn audit_verify_inclusion(bundle: PathBuf, identity: Option<PathBuf>, public_key: Option<String>) -> Result<()> {
     let data = if bundle.to_str() == Some("-") {
         let mut s = String::new();
         std::io::Read::read_to_string(&mut std::io::stdin(), &mut s).map_err(|e| anyhow::anyhow!("Cannot read bundle from standard input: {}", e))?;
@@ -1731,19 +1833,17 @@ fn audit_verify_inclusion(bundle: PathBuf, identity: Option<PathBuf>) -> Result<
         std::fs::read_to_string(&bundle).map_err(|e| anyhow::anyhow!("Cannot read {}: {}", bundle.display(), e))?
     };
     let bundle: cleimesh_receipt::InclusionBundle = serde_json::from_str(&data).map_err(|e| anyhow::anyhow!("Invalid bundle: {}", e))?;
-    let keypair = node_key::load_or_generate(&identity_key_path(identity, node_key::NODE_KEY_FILE)?)?;
-    let anchor = node_key::aat_signing_key(&keypair)?.verifying_key();
+    let (anchor, _) = verify_anchor(identity, public_key)?;
     bundle.verify(&anchor).map_err(|e| anyhow::anyhow!("{e}"))?;
-    println!("OK: receipt {} of {} is in the log, under a head signed by {}", bundle.index, bundle.tree_size, bundle.sth.public_key);
+    println!("OK: the receipt at index {} (line {}) of {} is in the log, under a head signed by {}", bundle.index, bundle.index + 1, bundle.tree_size, bundle.sth.public_key);
     Ok(())
 }
 
-fn audit_verify(receipts: Option<PathBuf>, identity: Option<PathBuf>, saved_head: Option<PathBuf>) -> Result<()> {
+fn audit_verify(receipts: Option<PathBuf>, identity: Option<PathBuf>, public_key: Option<String>, saved_head: Option<PathBuf>) -> Result<()> {
     use cleimesh_receipt::{check_head, head_path, Head, HeadStatus};
     let path = receipts_path(receipts)?;
     let log = std::fs::read(&path).map_err(|e| anyhow::anyhow!("Cannot read {}: {}", path.display(), e))?;
-    let keypair = node_key::load_or_generate(&identity_key_path(identity, node_key::NODE_KEY_FILE)?)?;
-    let anchor = node_key::aat_signing_key(&keypair)?.verifying_key();
+    let (anchor, signer) = verify_anchor(identity, public_key)?;
     let report = cleimesh_receipt::verify_log(&log, &anchor);
     if !report.ok() {
         for failure in &report.failures {
@@ -1772,7 +1872,7 @@ fn audit_verify(receipts: Option<PathBuf>, identity: Option<PathBuf>, saved_head
     if notes.is_empty() {
         notes.push("no signed head found: lines cut from the end would go unnoticed".into());
     }
-    println!("OK: {} receipts in {}, signed by {}", report.lines, path.display(), keypair.public().to_peer_id());
+    println!("OK: {} receipts in {}, signed by {}", report.lines, path.display(), signer);
     for note in notes {
         println!("  {}", note);
     }
@@ -2016,6 +2116,140 @@ fn audit_tail(count: usize, receipts: Option<PathBuf>, json: bool) -> Result<()>
             Ok(r) => println!("{}", describe_receipt(&r)),
             Err(e) => println!("unreadable line: {}", e),
         }
+    }
+    Ok(())
+}
+
+fn guard_paths(a: GuardPathArgs) -> Result<guard::Paths> {
+    let dirs = directories::ProjectDirs::from("", "", "cleimesh").ok_or_else(|| anyhow::anyhow!("Cannot find the data and config directories"))?;
+    Ok(guard::Paths {
+        dir: a.dir.unwrap_or_else(|| dirs.data_dir().join("guard")),
+        receipts: a.receipts.unwrap_or_else(|| dirs.data_dir().join("receipts").join("claude-code.jsonl")),
+        identity: identity_key_path(a.identity, node_key::NODE_KEY_FILE)?,
+        config: a.config.unwrap_or_else(|| dirs.config_dir().join("guard").join("claude-code.json")),
+    })
+}
+
+fn claude_settings_path(project: &Option<PathBuf>) -> Result<PathBuf> {
+    Ok(match project {
+        Some(dir) => dir.join(".claude").join("settings.json"),
+        None => directories::BaseDirs::new().ok_or_else(|| anyhow::anyhow!("Cannot find the home directory"))?.home_dir().join(".claude").join("settings.json"),
+    })
+}
+
+fn read_settings(path: &Path) -> Result<serde_json::Value> {
+    match std::fs::read(path) {
+        Ok(b) => Ok(serde_json::from_slice(&b).map_err(|e| anyhow::anyhow!("{} is not JSON: {}", path.display(), e))?),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(serde_json::json!({})),
+        Err(e) => Err(anyhow::anyhow!("Cannot read {}: {}", path.display(), e).into()),
+    }
+}
+
+fn guard_command(cmd: GuardCommands) -> Result<()> {
+    match cmd {
+        GuardCommands::Hook { paths } => {
+            // Any failure to even find the paths refuses too.
+            let code = match guard_paths(paths) {
+                Ok(p) => guard::run_hook(&p),
+                Err(e) => {
+                    eprintln!("cleimesh guard: refused because the guard could not decide ({e}); it fails closed");
+                    2
+                }
+            };
+            std::process::exit(code);
+        }
+        GuardCommands::Install { project, print, yes } => {
+            let path = claude_settings_path(&project)?;
+            let exe = std::env::current_exe().and_then(std::fs::canonicalize).map_err(|e| anyhow::anyhow!("Cannot find this binary: {}", e))?;
+            let (settings, added) = guard::with_hook(read_settings(&path)?, guard::hook_entry(&exe, &[]))?;
+            let text = serde_json::to_string_pretty(&settings).map_err(|e| anyhow::anyhow!("{}", e))? + "\n";
+            if print {
+                print!("{text}");
+                return Ok(());
+            }
+            if !added {
+                println!("The guard is already in {}", path.display());
+                return Ok(());
+            }
+            println!("Adds a PreToolUse hook to {}:\n  {} guard hook (before every tool call; refuses with exit 2, fails closed)\nReceipts: <data dir>/cleimesh/receipts/claude-code.jsonl. Settings already there are kept.", path.display(), exe.display());
+            if !yes {
+                use std::io::{BufRead, Write};
+                print!("Go ahead? [y/N] ");
+                std::io::stdout().flush().ok();
+                let mut line = String::new();
+                std::io::stdin().lock().read_line(&mut line).map_err(|e| anyhow::anyhow!("{}", e))?;
+                if !matches!(line.trim(), "y" | "Y" | "yes" | "sim" | "s") {
+                    println!("Nothing changed.");
+                    return Ok(());
+                }
+            }
+            if let Some(dir) = path.parent() {
+                std::fs::create_dir_all(dir).map_err(|e| anyhow::anyhow!("Cannot create {}: {}", dir.display(), e))?;
+            }
+            std::fs::write(&path, text).map_err(|e| anyhow::anyhow!("Cannot write {}: {}", path.display(), e))?;
+            println!("Guard installed in {}. It applies to Claude Code sessions started from now on.", path.display());
+        }
+        GuardCommands::Uninstall { project } => {
+            let path = claude_settings_path(&project)?;
+            let (settings, removed) = guard::without_hook(read_settings(&path)?);
+            if removed {
+                std::fs::write(&path, serde_json::to_string_pretty(&settings).map_err(|e| anyhow::anyhow!("{}", e))? + "\n").map_err(|e| anyhow::anyhow!("Cannot write {}: {}", path.display(), e))?;
+                println!("Guard removed from {}", path.display());
+            } else {
+                println!("No guard hook in {}", path.display());
+            }
+        }
+        GuardCommands::Status { paths } => {
+            let state = guard::status(&guard_paths(paths)?)?;
+            if state.tainted.is_empty() {
+                println!("No tainted sessions.");
+            }
+            for (session, step) in &state.tainted {
+                println!("{session}  tainted by receipt {step}");
+            }
+        }
+        GuardCommands::Clear { sessions, all, reason, paths } => {
+            if sessions.is_empty() && !all {
+                return Err(anyhow::anyhow!("name the sessions to clear, or --all").into());
+            }
+            for s in guard::clear(&guard_paths(paths)?, &sessions, all, &reason)? {
+                println!("Cleared {s}");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `cleimesh audit view`: the log as one HTML page.
+fn audit_view(receipts: Option<PathBuf>, identity: Option<PathBuf>, out: PathBuf) -> Result<()> {
+    let path = receipts_path(receipts)?;
+    let log = std::fs::read(&path).map_err(|e| anyhow::anyhow!("Cannot read {}: {}", path.display(), e))?;
+    let lines: Vec<String> = String::from_utf8_lossy(log.strip_suffix(b"\n").unwrap_or(&log)).lines().map(str::to_string).collect();
+    // Verify only against a key that exists: a viewer must not create one.
+    let key = identity_key_path(identity, node_key::NODE_KEY_FILE)?;
+    let verification = if key.exists() {
+        let keypair = node_key::load_or_generate(&key)?;
+        let anchor = node_key::aat_signing_key(&keypair)?.verifying_key();
+        let report = cleimesh_receipt::verify_log(&log, &anchor);
+        if report.ok() {
+            view::Verification::Verified { signer: keypair.public().to_peer_id().to_string() }
+        } else {
+            view::Verification::Failed(report.failures)
+        }
+    } else {
+        view::Verification::NotChecked(format!("No node key at {}: pass --identity with the key that signed this log.", key.display()))
+    };
+    let status = match &verification {
+        view::Verification::Verified { .. } => "verified".to_string(),
+        view::Verification::Failed(f) => format!("VERIFICATION FAILED on {} line(s)", f.len()),
+        view::Verification::NotChecked(_) => "not verified (no node key)".to_string(),
+    };
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+    let html = view::render(&lines, &path.display().to_string(), &verification, now);
+    std::fs::write(&out, html).map_err(|e| anyhow::anyhow!("Cannot write {}: {}", out.display(), e))?;
+    println!("Wrote {} ({} receipts, {})", out.display(), lines.len(), status);
+    if matches!(verification, view::Verification::Failed(_)) {
+        return Err(anyhow::anyhow!("the log fails verification; the page marks the lines").into());
     }
     Ok(())
 }

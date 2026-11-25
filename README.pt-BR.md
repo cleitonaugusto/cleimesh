@@ -25,6 +25,8 @@ Sua equipe dá ferramentas reais aos agentes: e-mail, arquivos, pagamentos, prod
 
 ![Dois servidores MCP oficiais adicionados com um comando cada; o agente busca uma página envenenada, lê um segredo, e a gravação do segredo é recusada no outro servidor; os recibos dizem por quê](examples/mcp-add/mcp-add.gif)
 
+**Vídeos (cerca de um minuto cada, legendados):** [um agente lê uma página envenenada](docs/videos/v1-poisoned-page-pt.mp4) · [prove ao auditor](docs/videos/v2-prove-it-pt.mp4) · [o Claude Code lê uma issue envenenada](docs/videos/v3-poisoned-issue-pt.mp4)
+
 ## Para quem desenvolve
 
 - **Mantenha seu agente e seus servidores.** O `cleimesh mcp add` põe cada servidor atrás de um token assinado; o agente chama as tools como sempre.
@@ -32,9 +34,21 @@ Sua equipe dá ferramentas reais aos agentes: e-mail, arquivos, pagamentos, prod
 - **Quando o agente ainda precisa agir depois de ler,** o `--when-tainted` deixa ele alcançar só os destinos que o token fixa: o chefe recebe o resumo, o endereço que veio no e-mail não.
 - **Timeout honesto.** Uma chamada cortada no limite fica registrada como *desconhecida*, não como falha, e a mesma chamada é recusada até alguém conferir o que aconteceu e registrar o resultado, para que ela nunca rode duas vezes por acidente.
 
+## Agentes de código também
+
+Seu agente de código lê issues, páginas e downloads o dia todo. O `cleimesh guard install` põe o Claude Code atrás da mesma regra, pelo hook dele: depois que a sessão traz conteúdo de fora, o push, o segredo, o pipe para o `curl` e a edição do `CLAUDE.md` esperam uma pessoa, e cada decisão é um recibo assinado. Numa execução real, o Claude Code leu uma issue envenenada, recebeu o pedido de dar push e ler o `.env`, e os dois foram recusados; o servidor do atacante recebeu 0 conexões ([como funciona e os limites](examples/guard/README.md), em inglês).
+
+![Uma sessão real do Claude Code depois de ler uma issue envenenada: git push com redirecionamento, a leitura do .env e o git push são recusados pelo cleimesh guard, e o Claude relata que o hook os bloqueou](examples/guard/guard.gif)
+
+```sh
+cleimesh guard install          # todos os projetos; ou --project <dir>
+cleimesh audit view --receipts ~/.local/share/cleimesh/receipts/claude-code.jsonl
+```
+
 ## Para segurança, risco e compliance
 
-- **Um registro que um terceiro confere.** Os recibos são assinados e encadeados por hash, e o log se compromete numa árvore Merkle RFC 6962: entregue ao auditor um recibo e uma cabeça de árvore assinada, e ele verifica sem o resto do log (`audit prove`, `audit verify-inclusion`).
+- **Um registro que um terceiro confere.** Os recibos são assinados e encadeados por hash, e o log se compromete numa árvore Merkle RFC 6962: entregue ao auditor um recibo e uma cabeça de árvore assinada, e ele verifica sem o resto do log, só com a sua chave pública (`audit prove`, `audit verify-inclusion --public-key <PeerId>`).
+- **Uma página para ler.** O `cleimesh audit view` escreve o log como uma página HTML: cada chamada, o que uma leitura não confiável mudou, cada recusa ligada à leitura que a causou e se o log verifica.
 - **Construído sobre drafts abertos, com os vetores como prova.** Os tokens passam nos 229 vetores byte a byte da suíte de conformidade do draft IETF [Attenuating Agent Tokens](https://datatracker.ietf.org/doc/draft-niyikiza-oauth-attenuating-agent-tokens/) (-02) ([como rodar](cleimesh-aat/tests/vectors_02.rs)); os recibos reproduzem byte a byte os vetores de teste do [draft-sahu-agent-action-receipts](https://datatracker.ietf.org/doc/draft-sahu-agent-action-receipts/) ([BENCHMARKS.md](BENCHMARKS.md)).
 - **As perguntas do auditor, respondidas pelo log:** quem autorizou o agente, em nome de quem, de quem são os dados pessoais que cada chamada declarou tocar, o que foi recusado e por quê. O `cleimesh audit report` mostra tudo sobre um titular, ou o registro das operações de um agente (LGPD art. 37, GDPR art. 30). O `audit export` manda para o seu SIEM como eventos OCSF.
 - **Teste em dois minutos,** no Docker, contra um servidor real: o [kit de avaliação](examples/evaluation/README.md) (em inglês) confere 19 propriedades e imprime PASS ou FAIL para cada uma.

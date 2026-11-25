@@ -25,6 +25,8 @@ Your team gives agents real tools: mail, files, payments, prod. One web page, ti
 
 ![Two official MCP servers added with one command each; the agent fetches a poisoned page, reads a secret, and its write of the secret is refused on the other server; the receipts say why](examples/mcp-add/mcp-add.gif)
 
+**Videos (about a minute each, captioned):** [an agent reads a poisoned page](docs/videos/v1-poisoned-page-en.mp4) · [prove it to an auditor](docs/videos/v2-prove-it-en.mp4) · [Claude Code reads a poisoned issue](docs/videos/v3-poisoned-issue-en.mp4)
+
 ## For engineers
 
 - **Keep your agent and your servers.** `cleimesh mcp add` puts each server behind a signed token; the agent calls tools as usual.
@@ -32,9 +34,21 @@ Your team gives agents real tools: mail, files, payments, prod. One web page, ti
 - **When the agent must still act after reading,** `--when-tainted` lets it reach only the destinations the token fixes: the boss gets the summary, the address in the email doesn't.
 - **Timeouts are honest.** A call cut at its limit is recorded as *unknown*, not as failed, and the same call is refused until someone checks what happened and settles it, so it never runs twice by accident.
 
+## Coding agents too
+
+Your coding agent reads issues, pages and downloads all day. `cleimesh guard install` puts Claude Code behind the same rule through its own hook: once a session brings in outside content, the push, the secret, the pipe to `curl` and the edit to `CLAUDE.md` wait for a person, and every decision is a signed receipt. In a real run, Claude Code read a poisoned issue, was asked to push and read `.env`, and both were refused; the attacker's server got 0 requests ([how it works, and its limits](examples/guard/README.md)).
+
+![A real Claude Code session after reading a poisoned issue: git push with a redirect, reading .env, and git push are each refused by cleimesh guard, and Claude reports that the hook blocked them](examples/guard/guard.gif)
+
+```sh
+cleimesh guard install          # every project; or --project <dir>
+cleimesh audit view --receipts ~/.local/share/cleimesh/receipts/claude-code.jsonl
+```
+
 ## For security, risk and compliance
 
-- **A record a third party can check.** Receipts are signed and hash-chained, and the log commits to an RFC 6962 Merkle tree: hand an auditor one receipt and a signed tree head, and they verify it without the rest of the log (`audit prove`, `audit verify-inclusion`).
+- **A record a third party can check.** Receipts are signed and hash-chained, and the log commits to an RFC 6962 Merkle tree: hand an auditor one receipt and a signed tree head, and they verify it without the rest of the log, with your public key alone (`audit prove`, `audit verify-inclusion --public-key <PeerId>`).
+- **A page to read it.** `cleimesh audit view` writes the log as one HTML page: each call, what an untrusted read changed, every refusal linked to the read that caused it, and whether the log verifies.
 - **Built on open drafts, with the vectors to prove it.** Tokens pass all 229 byte-exact vectors of the conformance suite for the IETF draft [Attenuating Agent Tokens](https://datatracker.ietf.org/doc/draft-niyikiza-oauth-attenuating-agent-tokens/) (-02) ([how to run it](cleimesh-aat/tests/vectors_02.rs)); receipts reproduce the test vectors of [draft-sahu-agent-action-receipts](https://datatracker.ietf.org/doc/draft-sahu-agent-action-receipts/) byte for byte ([BENCHMARKS.md](BENCHMARKS.md)).
 - **Questions an auditor asks, answered from the log:** who authorized the agent, on whose behalf, whose personal data each call declared it touched, what was refused and why. `cleimesh audit report` prints everything about one data subject, or one agent's record of operations (LGPD art. 37, GDPR art. 30). `audit export` sends it to your SIEM as OCSF events.
 - **Try it in two minutes,** in Docker, against a real server: the [evaluation kit](examples/evaluation/README.md) checks 19 properties and prints PASS or FAIL for each.

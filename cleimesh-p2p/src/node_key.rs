@@ -67,6 +67,23 @@ pub fn holder_jwk(peer: &PeerId) -> Result<cleimesh_aat::Jwk> {
     Ok(cleimesh_aat::Jwk::from_key(&key))
 }
 
+/// A node's public key as an auditor is given it: the PeerId (`12D3Koo...`,
+/// as `cleimesh id` and `audit verify` print it) or the 64 hex characters
+/// in a receipt's `public_key`. No key file needed.
+pub fn verifying_key_from_str(s: &str) -> Result<cleimesh_aat::VerifyingKey> {
+    let s = s.trim();
+    if s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()) {
+        let bytes: Vec<u8> = (0..32).map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap()).collect();
+        let arr: [u8; 32] = bytes.try_into().unwrap();
+        return cleimesh_aat::VerifyingKey::from_bytes(&arr).map_err(|_| anyhow::anyhow!("{} is not an Ed25519 public key", s).into());
+    }
+    let peer: PeerId = s.parse().map_err(|_| anyhow::anyhow!("{} is neither a PeerId nor 64 hex characters", s))?;
+    let not_ed25519 = || anyhow::anyhow!("PeerId {} does not embed an Ed25519 key", peer);
+    let public = PublicKey::try_decode_protobuf(peer.as_ref().digest()).map_err(|_| not_ed25519())?;
+    let ed25519 = public.try_into_ed25519().map_err(|_| not_ed25519())?;
+    Ok(cleimesh_aat::VerifyingKey::from_bytes(&ed25519.to_bytes()).map_err(|_| not_ed25519())?)
+}
+
 /// Writes the key to a temporary file created with mode 0600, then links it
 /// into place, so a crash never leaves a half-written key behind. Returns
 /// false, and changes nothing, if another process stored a key first: a
@@ -131,6 +148,16 @@ fn check_permissions(_path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_auditor_names_the_key_by_peer_id_or_hex() {
+        let keypair = Keypair::generate_ed25519();
+        let want = aat_signing_key(&keypair).unwrap().verifying_key();
+        assert_eq!(verifying_key_from_str(&keypair.public().to_peer_id().to_string()).unwrap(), want);
+        let hex: String = want.to_bytes().iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(verifying_key_from_str(&hex).unwrap(), want);
+        assert!(verifying_key_from_str("not a key").is_err());
+    }
 
     #[test]
     fn processes_racing_to_create_the_key_all_get_the_one_on_disk() {

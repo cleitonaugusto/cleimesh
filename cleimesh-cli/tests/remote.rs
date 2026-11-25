@@ -271,4 +271,11 @@ async fn a_timed_out_call_is_recorded_as_unknown_until_a_person_settles_it() {
     let fresh = Command::new(exe).args(["audit", "settle", "no-such-step", "--outcome", "failed", "--evidence", "x", "--correct", "--receipts", &p(&k("r.jsonl")), "--identity", &p(&k("node.key"))]).output().unwrap();
     assert!(!fresh.status.success() && String::from_utf8_lossy(&fresh.stderr).contains("no settlement to correct"));
     cleimesh(&["audit", "verify", "--receipts", &p(&k("r.jsonl")), "--identity", &p(&k("node.key"))]);
+
+    // The page shows the call, who settled it, the correction, and that the log verifies.
+    let out = cleimesh(&["audit", "view", "--receipts", &p(&k("r.jsonl")), "--identity", &p(&k("node.key")), "-o", &p(&k("view.html"))]);
+    assert!(out.contains("verified"), "{out}");
+    let html = std::fs::read_to_string(k("view.html")).unwrap();
+    assert!(html.contains("<b>Verified.</b>") && html.contains("Settled: succeeded</b> by ana@ops") && html.contains("Corrected: failed</b>"), "{html}");
+    assert!(html.contains("SETTLED: DID NOT RUN") && html.contains("psp-statement.csv") && !html.contains("<script"));
 }

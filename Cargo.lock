@@ -722,7 +722,7 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
 name = "cleimesh-aat"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "base64 0.22.1",
  "criterion",
@@ -740,7 +740,7 @@ dependencies = [
 
 [[package]]
 name = "cleimesh-allowance"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "cleimesh-aat",
  "ed25519-dalek 2.2.0",
@@ -750,7 +750,7 @@ dependencies = [
 
 [[package]]
 name = "cleimesh-cli"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "anyhow",
  "axum 0.8.9",
@@ -782,7 +782,7 @@ dependencies = [
 
 [[package]]
 name = "cleimesh-core"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "anyhow",
  "bytes",
@@ -793,7 +793,7 @@ dependencies = [
 
 [[package]]
 name = "cleimesh-observability"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -815,7 +815,7 @@ dependencies = [
 
 [[package]]
 name = "cleimesh-p2p"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "anyhow",
  "chrono",
@@ -845,7 +845,7 @@ dependencies = [
 
 [[package]]
 name = "cleimesh-receipt"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "criterion",
  "ed25519-dalek 2.2.0",
@@ -859,7 +859,7 @@ dependencies = [
 
 [[package]]
 name = "cleimesh-wasm-sandbox"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "anyhow",
  "bytes",

@@ -239,6 +239,11 @@ cleimesh mcp add mail --taints get_emails_content --clean-only send_email \
 # after reading a mail: send_email to boss@corp.test goes through, anywhere else is refused
 ```
 
+For the one-off case, `--approvals DIR` lets a person approve a single call. A clean-only call refused because
+the agent is tainted is written to `DIR/requests/<id>.json` (tool, arguments, their digest). A token from the
+node key that allows exactly that call, saved as `DIR/granted/<id>.json` with the same `tool` and `args_sha256`,
+is presented for the next identical call, once; the node still checks it like any other.
+
 ## Documentation
 
 | | |

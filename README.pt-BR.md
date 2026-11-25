@@ -201,6 +201,11 @@ cleimesh mcp add mail --taints get_emails_content --clean-only send_email \
 # depois de ler um e-mail: send_email para chefe@corp.test passa, para qualquer outro é recusado
 ```
 
+Para o caso avulso, `--approvals DIR` deixa uma pessoa aprovar uma única chamada. Uma chamada `--clean-only`
+recusada porque o agente está contaminado é gravada em `DIR/requests/<id>.json` (tool, argumentos e o digest
+deles). Um token da chave do nó que permite exatamente essa chamada, salvo como `DIR/granted/<id>.json` com o
+mesmo `tool` e `args_sha256`, é apresentado na próxima chamada idêntica, uma vez; o nó confere como qualquer outro.
+
 ## Documentação
 
 | | |

@@ -285,6 +285,73 @@ pub struct Wrapper {
     credentials: Option<(Vec<Vec<String>>, aat::SigningKey)>,
     audience: String,
     tools: Vec<Tool>,
+    approvals: Option<Approvals>,
+}
+
+/// Single calls a person approved for a tainted agent (`mcp wrap --approvals
+/// DIR`). When a clean-only call is refused because the agent is tainted, the
+/// wrapper writes the exact call to `DIR/requests/<id>.json`. Whoever holds
+/// the node key can answer it with a token that grants only that call (its
+/// `when_tainted` fixes every argument to the value requested), saved as
+/// `DIR/granted/<id>.json`. The next identical call is presented under that
+/// token, once: the file is removed after use. The node still decides; this
+/// only picks which token to present.
+pub struct Approvals {
+    dir: std::path::PathBuf,
+}
+
+/// A refused call waiting for a person (`DIR/requests/<id>.json`).
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct ApprovalRequest {
+    pub id: String,
+    pub server: String,
+    pub tool: String,
+    pub arguments: serde_json::Value,
+    /// Canonical digest of `arguments`, as receipts commit to them.
+    pub args_sha256: String,
+    pub refused: String,
+    pub created: i64,
+}
+
+/// A person's answer (`DIR/granted/<id>.json`): the chain to present for
+/// exactly this tool and these arguments.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct Approval {
+    pub id: String,
+    pub tool: String,
+    pub args_sha256: String,
+    pub chain: Vec<String>,
+}
+
+impl Approvals {
+    pub fn new(dir: std::path::PathBuf) -> Self {
+        Approvals { dir }
+    }
+
+    /// The approval for exactly this call, if a person gave one.
+    fn find(&self, tool: &str, args_sha256: &str) -> Option<(std::path::PathBuf, Vec<String>)> {
+        let entries = std::fs::read_dir(self.dir.join("granted")).ok()?;
+        entries.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")).find_map(|path| {
+            let approval: Approval = serde_json::from_str(&std::fs::read_to_string(&path).ok()?).ok()?;
+            (approval.tool == tool && approval.args_sha256 == args_sha256).then_some((path, approval.chain))
+        })
+    }
+
+    fn request(&self, server: &str, tool: &str, arguments: &serde_json::Value, args_sha256: &str, refused: &str) -> std::io::Result<String> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let dir = self.dir.join("requests");
+        std::fs::create_dir_all(&dir)?;
+        let created = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+        let request = ApprovalRequest { id: id.clone(), server: server.into(), tool: tool.into(), arguments: arguments.clone(), args_sha256: args_sha256.into(), refused: refused.into(), created };
+        let path = dir.join(format!("{id}.json"));
+        // The arguments may carry what the agent wanted to send: owner-only.
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        std::io::Write::write_all(&mut options.open(&path)?, serde_json::to_string_pretty(&request)?.as_bytes())?;
+        Ok(id)
+    }
 }
 
 /// One wrapped server.
@@ -307,6 +374,7 @@ impl Wrapper {
         node: CleiMeshNode,
         backends: Vec<Wrapped>,
         credentials: Option<(Vec<Vec<String>>, aat::SigningKey)>,
+        approvals: Option<Approvals>,
     ) -> Result<Self, String> {
         let chains: &[Vec<String>] = credentials.as_ref().map(|(c, _)| c.as_slice()).unwrap_or_default();
         let (mut tools, mut route) = (Vec::new(), std::collections::HashMap::new());
@@ -335,7 +403,7 @@ impl Wrapper {
             }
         }
         let audience = node.aat_audience();
-        Ok(Wrapper { node: Mutex::new(node), backends, route, credentials, audience, tools })
+        Ok(Wrapper { node: Mutex::new(node), backends, route, credentials, audience, tools, approvals })
     }
 }
 
@@ -364,10 +432,15 @@ impl ServerHandler for Wrapper {
         // another server's chain granting the same name must not stand in for
         // it, with different constraints or taint flags.
         let own = route.and_then(|b| b.chain).and_then(|i| self.credentials.as_ref().map(|(chains, key)| (chains.get(i..=i).map(<[_]>::to_vec).unwrap_or_default(), key.clone())));
-        let presentation = match present(own.as_ref().or(self.credentials.as_ref()), &self.audience, &tool, &args) {
+        // A person approved exactly this call: present that token instead.
+        let args_sha256 = cleimesh_p2p::receipts::json_sha256(&args);
+        let approved = self.approvals.as_ref().and_then(|a| a.find(&tool, &args_sha256));
+        let approved_credentials = approved.as_ref().and_then(|(_, chain)| self.credentials.as_ref().map(|(_, key)| (vec![chain.clone()], key.clone())));
+        let presentation = match present(approved_credentials.as_ref().or(own.as_ref()).or(self.credentials.as_ref()), &self.audience, &tool, &args) {
             Ok(p) => p,
             Err(e) => return Ok(error_result(format!("cannot present the token: {}", e))),
         };
+        let asked = args.clone();
         let request = ToolRequest {
             tool_name: tool.clone(),
             payload: args,
@@ -380,6 +453,7 @@ impl ServerHandler for Wrapper {
             return Ok(error_result(format!("no wrapped server offers {}", tool)));
         };
         let server = &backend.server;
+        let tool_name = tool.clone();
         let run = |request: ToolRequest| async move {
             let mut params = CallToolRequestParams::new(tool);
             params.arguments = arguments;
@@ -393,11 +467,24 @@ impl ServerHandler for Wrapper {
             cleimesh_p2p::ToolResponse { request_id: request.request_id, success, output, error }
         };
         let response = self.node.lock().await.run_external(CALLER, request, &backend.server_sha256, definition, run).await;
+        // An approval is good for one call, whatever came of it.
+        if let Some((path, _)) = &approved {
+            let _ = std::fs::remove_file(path);
+        }
         // The server's own result, error or not, goes back as it gave it.
         if let Ok(result) = serde_json::from_value::<CallToolResult>(response.output.clone()) {
             return Ok(result.into());
         }
-        Ok(error_result(response.error.unwrap_or_else(|| "tool failed".into())))
+        let mut error = response.error.unwrap_or_else(|| "tool failed".into());
+        if let (Some(approvals), None) = (&self.approvals, &approved) {
+            if error.contains("received untrusted content") {
+                match approvals.request(&backend.name, &tool_name, &asked, &args_sha256, &error) {
+                    Ok(id) => error.push_str(&format!(". Waiting for a person: request {} can be approved for this exact call", id)),
+                    Err(e) => error.push_str(&format!(". The approval request was not saved: {}", e)),
+                }
+            }
+        }
+        Ok(error_result(error))
     }
 }
 

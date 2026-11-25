@@ -298,6 +298,12 @@ enum McpCommands {
         /// and COMMAND
         #[arg(long, value_name = "FILE", conflicts_with_all = ["token", "allowance"])]
         servers: Option<PathBuf>,
+        /// Directory of single-call approvals: a clean-only call refused
+        /// because the agent is tainted is written to DIR/requests, and a
+        /// token in DIR/granted that allows exactly that call is presented
+        /// for it, once
+        #[arg(long, value_name = "DIR", conflicts_with = "allowance")]
+        approvals: Option<PathBuf>,
         /// The MCP server's command and its arguments, after `--`
         #[arg(last = true, required_unless_present = "servers", value_name = "COMMAND")]
         command: Vec<String>,
@@ -332,6 +338,10 @@ enum McpCommands {
         /// (repeatable). E.g. send_email.recipients=boss@corp.test
         #[arg(long = "when-tainted", value_name = "TOOL.ARG=VALUES")]
         when_tainted: Vec<String>,
+        /// Register the wrapper with --approvals DIR: refused tainted calls
+        /// wait there for a person to approve each one
+        #[arg(long, value_name = "DIR")]
+        approvals: Option<PathBuf>,
         /// Token lifetime in seconds (default 30 days)
         #[arg(long, default_value = "2592000")]
         ttl: i64,
@@ -773,18 +783,18 @@ async fn run(cli: Cli) -> Result<()> {
             }
         }
         Commands::Mcp(McpCommands::Serve { token, holder, node, identity, receipts }) => mcp_serve(token, holder, node, identity, receipts).await?,
-        Commands::Mcp(McpCommands::Wrap { token, holder, identity, receipts, allowance, owner, agent, ledger, servers, command }) => {
+        Commands::Mcp(McpCommands::Wrap { token, holder, identity, receipts, allowance, owner, agent, ledger, servers, approvals, command }) => {
             match allowance {
                 Some(allowance) => {
                     let owner = owner.ok_or_else(|| cleimesh_core::CleiMeshError::Internal(anyhow::anyhow!("--allowance needs --owner <owner.key.pub.json>")))?;
                     let agent = agent.ok_or_else(|| cleimesh_core::CleiMeshError::Internal(anyhow::anyhow!("--allowance needs --agent <agent.key>")))?;
                     allowance::wrap(allowance, agent, owner, ledger, receipts, command).await?
                 }
-                None => mcp_wrap(token, holder, identity, receipts, servers, command).await?,
+                None => mcp_wrap(token, holder, identity, receipts, servers, approvals, command).await?,
             }
         }
-        Commands::Mcp(McpCommands::Add { name, tools, taints, clean_only, when_tainted, ttl, scope, print, dir, holder, identity, receipts, command }) => {
-            mcp_add(McpAdd { name, tools, taints, clean_only, when_tainted, ttl, scope, print, dir, holder, identity, receipts, command }).await?
+        Commands::Mcp(McpCommands::Add { name, tools, taints, clean_only, when_tainted, approvals, ttl, scope, print, dir, holder, identity, receipts, command }) => {
+            mcp_add(McpAdd { name, tools, taints, clean_only, when_tainted, approvals, ttl, scope, print, dir, holder, identity, receipts, command }).await?
         }
         Commands::Allowance(cmd) => match cmd {
             AllowanceCommands::Keygen { out } => allowance::keygen(&out)?,
@@ -1182,6 +1192,7 @@ async fn mcp_wrap(
     identity: Option<PathBuf>,
     receipts: Option<PathBuf>,
     servers: Option<PathBuf>,
+    approvals: Option<PathBuf>,
     command: Vec<String>,
 ) -> Result<()> {
     use rmcp::ServiceExt;
@@ -1218,7 +1229,7 @@ async fn mcp_wrap(
         let holder_key = node_key::aat_signing_key(&node_key::load_or_generate(&identity_key_path(holder, node_key::CLIENT_KEY_FILE)?)?)?;
         Some((chains, holder_key))
     };
-    let wrapper = match mcp::Wrapper::new(node, std::mem::take(&mut backends), credentials).await {
+    let wrapper = match mcp::Wrapper::new(node, std::mem::take(&mut backends), credentials, approvals.map(mcp::Approvals::new)).await {
         Ok(w) => w,
         Err(e) => return Err(anyhow::anyhow!(e).into()),
     };
@@ -1261,6 +1272,7 @@ struct McpAdd {
     taints: Vec<String>,
     clean_only: Vec<String>,
     when_tainted: Vec<String>,
+    approvals: Option<PathBuf>,
     ttl: i64,
     scope: String,
     print: bool,
@@ -1381,7 +1393,7 @@ async fn mcp_add(a: McpAdd) -> Result<()> {
 
     let exe = std::env::current_exe().map_err(|e| fail(format!("Cannot find this binary: {}", e)))?;
     let mut wrap = vec![exe.display().to_string(), "mcp".into(), "wrap".into(), "--servers".into(), abs(&servers_path)?.display().to_string()];
-    for (flag, path) in [("--holder", &a.holder), ("--identity", &a.identity), ("--receipts", &a.receipts)] {
+    for (flag, path) in [("--holder", &a.holder), ("--identity", &a.identity), ("--receipts", &a.receipts), ("--approvals", &a.approvals)] {
         if let Some(p) = path {
             wrap.extend([flag.to_string(), abs(p)?.display().to_string()]);
         }
